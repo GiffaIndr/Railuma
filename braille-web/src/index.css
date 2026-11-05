@@ -1,0 +1,221 @@
+@import "tailwindcss";
+
+/* Palette Railuma + warna gelap turunan agar teks lolos WCAG AA */
+@theme {
+  --color-mint: #8ad6d1;
+  --color-teal: #359fa0;
+  --color-cream: #fff0c5;
+  --color-coral: #ff8c52;
+  --color-ink: #0a2a2b;
+  --color-deep: #1b6566;
+  --color-muted: #2f4f50;
+  --font-sans: "Atkinson Hyperlegible", system-ui, sans-serif;
+}
+
+html {
+  font-size: 20px;
+}
+
+body {
+  margin: 0;
+  background: var(--color-cream);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+}
+
+button,
+textarea,
+input {
+  font-family: inherit;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+/* Fokus selalu terlihat */
+a:focus-visible,
+button:focus-visible,
+textarea:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 4px solid var(--color-ink);
+  outline-offset: 4px;
+  box-shadow: 0 0 0 4px var(--color-cream);
+}
+
+.skip-link {
+  position: absolute;
+  left: 16px;
+  top: -90px;
+  z-index: 50;
+  padding: 14px 20px;
+  background: var(--color-ink);
+  color: var(--color-cream);
+  font-weight: 700;
+  border-radius: 12px;
+  text-decoration: none;
+}
+.skip-link:focus {
+  top: 12px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Tombol besar (tinggi minimal 60px) */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 0 26px;
+  border-radius: 16px;
+  border: 3px solid var(--color-ink);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-ink);
+  text-align: center;
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: var(--color-coral);
+}
+.btn-primary:hover:not(:disabled) {
+  background: #ff7a38;
+}
+.btn-secondary {
+  background: #fff;
+  border-color: var(--color-deep);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--color-mint);
+}
+
+.card {
+  background: #fff;
+  border: 2px solid var(--color-deep);
+  border-radius: 24px;
+  padding: 28px;
+}
+
+.field {
+  width: 100%;
+  background: #fff;
+  border: 3px solid var(--color-deep);
+  border-radius: 16px;
+  padding: 14px 18px;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--color-ink);
+}
+
+.tab {
+  flex: 1 1 260px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 96px;
+  padding: 14px 18px;
+  background: #fff;
+  border: 3px solid var(--color-deep);
+  border-radius: 20px;
+  color: var(--color-ink);
+  text-align: left;
+}
+.tab:hover {
+  background: var(--color-mint);
+}
+.tab-icon {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-mint);
+  border: 2px solid var(--color-ink);
+}
+.tab[aria-selected="true"],
+.tab[aria-selected="true"]:hover {
+  background: var(--color-teal);
+  border-color: var(--color-ink);
+}
+.tab[aria-selected="true"] .tab-icon {
+  background: var(--color-cream);
+}
+
+.radio-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 18px 20px;
+  background: #fff;
+  border: 3px solid var(--color-deep);
+  border-radius: 18px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.radio-card:has(input:checked) {
+  background: var(--color-mint);
+  border-color: var(--color-ink);
+}
+.radio-card input {
+  width: 28px;
+  height: 28px;
+  margin-top: 2px;
+  accent-color: var(--color-ink);
+  flex: none;
+}
+
+kbd {
+  display: inline-block;
+  padding: 1px 10px;
+  background: #fff;
+  border: 2px solid var(--color-ink);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.alert-box {
+  border: 4px solid var(--color-ink);
+  background: var(--color-coral);
+  border-radius: 18px;
+  padding: 18px 20px;
+}
+.ok-box {
+  border: 3px solid var(--color-ink);
+  background: var(--color-mint);
+  border-radius: 18px;
+  padding: 18px 20px;
+}
+
+.mic-live {
+  background: var(--color-ink);
+  color: var(--color-cream);
+  animation: ring 1.6s ease-out infinite;
+}
+@keyframes ring {
+  0% { box-shadow: 0 0 0 0 rgba(53, 159, 160, 0.8); }
+  100% { box-shadow: 0 0 0 18px rgba(53, 159, 160, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mic-live { animation: none; }
+}
