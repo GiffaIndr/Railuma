@@ -1,16 +1,30 @@
-import { useEffect, useRef, useState } from "react";
-import { Camera, CameraOff, ClipboardCheck, Upload, Volume2, TriangleAlert } from "lucide-react";
+import { useRef, useState } from "react";
+import {
+  Camera,
+  CameraOff,
+  CheckCircle2,
+  ClipboardCheck,
+  TriangleAlert,
+  Upload,
+  Volume2,
+} from "lucide-react";
 import { useCamera } from "../hooks/useCamera";
 import { useA11y } from "../context/useA11y";
 import { translateBrailleImage } from "../services/api";
 import { measureSharpness, sharpnessLabel, BLUR_MIN } from "../utils/blur";
 import { joinIndonesian, speakText } from "../utils/speech";
 import { gradeAnswers } from "../utils/grade";
-import Step from "./Step";
 
-// status: idle | nokey | nocam | blur | loading | empty | error | done
 export default function HomeworkCorrector() {
-  const { videoRef, canvasRef, isCameraActive, cameraError, startCamera, stopCamera, captureFrame } = useCamera();
+  const {
+    videoRef,
+    canvasRef,
+    isCameraActive,
+    cameraError,
+    startCamera,
+    stopCamera,
+    captureFrame,
+  } = useCamera();
   const { announce } = useA11y();
 
   const [key, setKey] = useState("");
@@ -18,14 +32,6 @@ export default function HomeworkCorrector() {
   const [sharp, setSharp] = useState(0);
   const [report, setReport] = useState(null);
   const fileRef = useRef(null);
-  const resultRef = useRef(null);
-
-  // Setelah ada hasil atau peringatan, gulir otomatis agar langsung terlihat
-  useEffect(() => {
-    if (status === "idle" || status === "loading" || status === "nokey") return;
-    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    resultRef.current?.scrollIntoView({ block: "nearest", behavior: reduce ? "auto" : "smooth" });
-  }, [status, report]);
 
   const finish = (raw) => {
     if (!raw.trim()) {
@@ -35,8 +41,14 @@ export default function HomeworkCorrector() {
     const r = gradeAnswers(key, raw);
     setReport(r);
     setStatus("done");
-    const wrongText = r.wrong.length ? `Nomor yang salah: ${joinIndonesian(r.wrong)}.` : "Semua jawaban benar.";
-    announce(`Nilai ${r.correct} dari ${r.total}. Benar ${r.correct}, salah ${r.total - r.correct}. ${wrongText}`);
+    const wrongText = r.wrong.length
+      ? `Nomor yang salah: ${joinIndonesian(r.wrong)}.`
+      : "Semua jawaban benar.";
+    announce(
+      `Nilai ${r.correct} dari ${r.total}. Benar ${r.correct}, salah ${
+        r.total - r.correct
+      }. ${wrongText}`,
+    );
   };
 
   const requireKey = () => {
@@ -56,7 +68,7 @@ export default function HomeworkCorrector() {
     const s = measureSharpness(videoRef.current);
     setSharp(s.variance);
     if (s.ready && s.isBlurry) {
-      setStatus("blur"); // API tidak dipanggil
+      setStatus("blur");
       return;
     }
     setStatus("loading");
@@ -66,13 +78,11 @@ export default function HomeworkCorrector() {
       if (!blob) throw new Error("Gagal mengambil gambar");
       const data = await translateBrailleImage(blob);
       if (data.status === "blurry") {
-        // Server juga menolak gambar buram
         setSharp(data.sharpness ?? 0);
         setStatus("blur");
         return;
       }
       if (data.status !== "success") throw new Error(data.message || "Server gagal");
-      // raw_text dipakai (bukan final_text) supaya kesalahan murid tidak ikut dibetulkan kamus
       finish(data.raw_text || "");
     } catch (err) {
       console.error(err);
@@ -97,7 +107,6 @@ export default function HomeworkCorrector() {
       }
       const data = await translateBrailleImage(file);
       if (data.status === "blurry") {
-        // Server juga menolak gambar buram
         setSharp(data.sharpness ?? 0);
         setStatus("blur");
         return;
@@ -116,176 +125,254 @@ export default function HomeworkCorrector() {
   };
 
   return (
-    <ol className="m-0 flex list-none flex-col gap-6 p-0">
-      <Step number={1} title="Ketik kunci jawaban">
-        <div className="flex flex-col gap-2">
-          <label htmlFor="kunci" className="font-bold">
-            Kunci jawaban
+    <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
+      {/* Kolom Kiri (7/12): Kunci Jawaban & Viewfinder Kamera */}
+      <div className="flex flex-col gap-5 lg:col-span-7">
+        <section aria-labelledby="judul-kunci-jawaban" className="card flex flex-col gap-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-3">
+            <h2 id="judul-kunci-jawaban" className="m-0 text-[1.08rem] font-bold">
+              1. Kunci Jawaban Guru
+            </h2>
+            <span className="status-chip">Satu baris per nomor soal</span>
+          </div>
+
+          <label htmlFor="kunci" className="text-[0.88rem] font-semibold">
+            Ketik kunci jawaban sesuai urutan baris soal
           </label>
-          <p id="kunci-bantuan" className="m-0 text-[0.9rem] text-muted">
-            Tulis satu jawaban di setiap baris. Contoh: baris 1 "saya makan", baris 2 "ibu masak".
+          <p id="kunci-bantuan" className="m-0 text-[0.84rem] text-muted-theme">
+            Contoh: baris 1 &ldquo;saya makan&rdquo;, baris 2 &ldquo;ibu masak&rdquo;.
           </p>
           <textarea
             id="kunci"
-            rows={5}
+            rows={4}
             value={key}
             aria-describedby="kunci-bantuan"
             onChange={(e) => setKey(e.target.value)}
+            placeholder="Ketik kunci jawaban per baris..."
             className="field"
           />
-        </div>
-        {status === "nokey" && (
-          <div role="alert" className="alert-box">
-            <p className="m-0 flex items-start gap-3">
-              <TriangleAlert size={28} className="flex-none" aria-hidden="true" />
-              <span>
-                <strong>Peringatan.</strong> Kunci jawaban masih kosong. Isi kunci jawaban dulu.
-              </span>
-            </p>
-          </div>
-        )}
-      </Step>
 
-      <Step number={2} title="Pindai tugas murid">
-        <div className="flex aspect-video w-full items-center justify-center overflow-hidden rounded-[20px] border-[3px] border-deep bg-ink">
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            aria-label="Pratinjau kamera"
-            className={`h-full w-full object-contain ${isCameraActive ? "block" : "hidden"}`}
-          />
-          {!isCameraActive && (
-            <span className="flex items-center gap-3 px-4 text-center font-bold text-cream">
-              <CameraOff size={32} aria-hidden="true" /> Kamera belum menyala
+          {status === "nokey" && (
+            <div role="alert" className="alert-box text-[0.88rem]">
+              <strong>Perhatian:</strong> Isi kunci jawaban di atas terlebih dahulu sebelum
+              memindai lembar murid.
+            </div>
+          )}
+        </section>
+
+        <section aria-labelledby="judul-pindai-tugas" className="card flex flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-3">
+            <h2 id="judul-pindai-tugas" className="m-0 text-[1.08rem] font-bold">
+              2. Pindai Lembar Jawaban Murid
+            </h2>
+            <span className="status-chip">Dinilai murni dari titik murid</span>
+          </div>
+
+          <div className="camera-viewport">
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              width={1280}
+              height={720}
+              aria-label="Pratinjau kamera"
+              className={`h-full w-full object-contain ${isCameraActive ? "block" : "hidden"}`}
+            />
+            {!isCameraActive && (
+              <div className="flex flex-col items-center gap-2.5 px-6 text-center">
+                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white">
+                  <CameraOff size={22} aria-hidden="true" />
+                </span>
+                <span className="font-bold text-white">Kamera belum dinyalakan</span>
+                <span className="max-w-[36ch] text-[0.83rem] text-white/75">
+                  Nyalakan kamera atau unggah foto lembar jawaban Braille murid untuk mulai menilai.
+                </span>
+              </div>
+            )}
+          </div>
+          <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
+
+          {cameraError && (
+            <div role="alert" className="alert-box text-[0.88rem]">
+              <strong>Kamera tidak bisa dibuka.</strong> {cameraError}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2.5">
+            {isCameraActive ? (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  stopCamera();
+                  announce("Kamera dimatikan.");
+                }}
+              >
+                <CameraOff size={18} aria-hidden="true" />
+                <span>Matikan Kamera</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={async () => {
+                  if (await startCamera())
+                    announce("Kamera menyala. Arahkan kamera ke tugas murid.");
+                }}
+              >
+                <Camera size={18} aria-hidden="true" />
+                <span>Nyalakan Kamera</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              className="btn btn-primary flex-1"
+              onClick={scanCamera}
+              disabled={status === "loading"}
+            >
+              <ClipboardCheck size={18} aria-hidden="true" />
+              <span>{status === "loading" ? "Memindai..." : "Pindai Tugas Murid"}</span>
+            </button>
+
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="sr-only"
+              tabIndex={-1}
+              aria-hidden="true"
+              onChange={scanFile}
+            />
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => fileRef.current?.click()}
+            >
+              <Upload size={18} aria-hidden="true" />
+              <span>Unggah Foto Tugas</span>
+            </button>
+          </div>
+        </section>
+      </div>
+
+      {/* Kolom Kanan (5/12): Panel Hasil Nilai Lengket */}
+      <aside
+        aria-labelledby="judul-hasil-nilai"
+        className="card flex flex-col gap-4 lg:sticky lg:top-6 lg:col-span-5"
+      >
+        <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3">
+          <h2 id="judul-hasil-nilai" className="m-0 text-[1.08rem] font-bold">
+            3. Hasil Evaluasi
+          </h2>
+          {status === "done" && report && (
+            <span className="status-chip status-chip-ok">
+              <CheckCircle2 size={13} aria-hidden="true" />
+              <span>
+                {report.correct}/{report.total} Benar
+              </span>
             </span>
           )}
         </div>
-        <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
 
-        {cameraError && (
-          <div role="alert" className="alert-box">
-            <strong>Peringatan.</strong> {cameraError}
+        {status === "idle" && (
+          <div className="surface-subtle p-4 text-[0.9rem] text-muted-theme">
+            Belum ada hasil evaluasi. Isi kunci jawaban di kiri lalu pindai atau unggah foto lembar
+            jawaban murid.
           </div>
         )}
-
-        {isCameraActive ? (
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => {
-              stopCamera();
-              announce("Kamera dimatikan.");
-            }}
-          >
-            <CameraOff size={24} aria-hidden="true" /> Matikan kamera
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={async () => {
-              if (await startCamera()) announce("Kamera menyala. Arahkan kamera ke tugas murid.");
-            }}
-          >
-            <Camera size={24} aria-hidden="true" /> Nyalakan kamera
-          </button>
+        {status === "nokey" && (
+          <p className="m-0 text-[0.9rem] text-muted-theme">
+            Isi kunci jawaban di langkah 1 terlebih dahulu.
+          </p>
+        )}
+        {status === "loading" && (
+          <p className="m-0 font-semibold">Sedang memindai lembar jawaban. Mohon tunggu...</p>
         )}
 
-        <button type="button" className="btn btn-primary" onClick={scanCamera} disabled={status === "loading"}>
-          <ClipboardCheck size={24} aria-hidden="true" /> {status === "loading" ? "Memindai..." : "Pindai tugas murid"}
-        </button>
-
-        <input ref={fileRef} type="file" accept="image/*" className="sr-only" tabIndex={-1} aria-hidden="true" onChange={scanFile} />
-        <button type="button" className="btn btn-secondary" onClick={() => fileRef.current?.click()}>
-          <Upload size={24} aria-hidden="true" /> Pilih foto tugas dari galeri
-        </button>
-      </Step>
-
-      <Step number={3} title="Hasil nilai">
-        <div ref={resultRef} className="flex flex-col gap-4">
-        {status === "idle" && <p className="m-0 text-muted">Belum ada hasil. Selesaikan langkah 1 dan 2.</p>}
-        {status === "nokey" && <p className="m-0 text-muted">Isi kunci jawaban di langkah 1 dulu.</p>}
-        {status === "loading" && <p className="m-0 font-bold">Sedang memindai. Mohon tunggu.</p>}
-
         {status === "nocam" && (
-          <div role="alert" className="alert-box">
-            <strong>Peringatan.</strong> Kamera belum menyala. Tekan Nyalakan kamera di langkah 2.
+          <div role="alert" className="alert-box text-[0.88rem]">
+            <strong>Kamera belum menyala.</strong> Tekan Nyalakan Kamera atau unggah berkas foto.
           </div>
         )}
 
         {status === "blur" && (
-          <div role="alert" className="alert-box">
-            <p className="m-0 flex items-start gap-3">
-              <TriangleAlert size={28} className="flex-none" aria-hidden="true" />
+          <div role="alert" className="alert-box text-[0.88rem]">
+            <p className="m-0 flex items-start gap-2.5">
+              <TriangleAlert size={18} className="mt-0.5 flex-none" aria-hidden="true" />
               <span>
-                <strong>Gambar buram atau kamera terlalu dekat.</strong> Jauhkan kamera sedikit, lalu pindai lagi.
-                Pindai ditolak. Tidak ada data yang dikirim.
+                <strong>Gambar buram.</strong> Tahan kamera sebentar lalu pindai lagi. Ketajaman:{" "}
+                {sharpnessLabel(sharp)} ({sharp} dari minimal {BLUR_MIN}).
               </span>
-            </p>
-            <p className="m-0 mt-3 font-bold">
-              Ketajaman: {sharpnessLabel(sharp)} ({sharp} dari minimal {BLUR_MIN})
             </p>
           </div>
         )}
 
         {status === "empty" && (
-          <div role="alert" className="alert-box">
-            <strong>Tidak ada Braille yang terbaca.</strong> Dekatkan kertas sedikit dan pastikan cahaya cukup.
+          <div role="alert" className="alert-box text-[0.88rem]">
+            <strong>Belum ada Braille terbaca.</strong> Dekatkan kertas sedikit dan pastikan cahaya
+            cukup dari arah samping.
           </div>
         )}
 
         {status === "error" && (
-          <div role="alert" className="alert-box">
-            <strong>Peringatan.</strong> Tidak bisa menghubungi server. Periksa koneksi internet atau minta bantuan
-            pengelola aplikasi.
+          <div role="alert" className="alert-box text-[0.88rem]">
+            <strong>Gagal menghubungi server.</strong> Periksa koneksi jaringan lalu coba lagi.
           </div>
         )}
 
         {status === "done" && report && (
           <div className="flex flex-col gap-4">
-            <div className="ok-box">
-              <p className="m-0 text-[1.6rem] font-bold">
+            <div className="surface-subtle p-4">
+              <p className="m-0 text-[1.85rem] font-extrabold leading-none tabular-nums">
                 Nilai {report.correct} dari {report.total}
               </p>
-              <p className="m-0">
-                Benar {report.correct}. Salah {report.total - report.correct}.
+              <p className="m-0 mt-2 text-[0.9rem] text-muted-theme">
+                Benar {report.correct} · Salah {report.total - report.correct}
               </p>
-              <p className="m-0 font-bold">
-                {report.wrong.length ? `Nomor yang salah: ${joinIndonesian(report.wrong)}` : "Semua jawaban benar."}
+              <p className="m-0 mt-1 text-[0.9rem] font-semibold">
+                {report.wrong.length
+                  ? `Nomor yang salah: ${joinIndonesian(report.wrong)}`
+                  : "Semua jawaban benar."}
               </p>
             </div>
 
-            <table className="w-full border-collapse text-left text-[0.95rem]">
-              <caption className="mb-2 text-left font-bold">Rincian per nomor</caption>
-              <thead>
-                <tr className="bg-mint">
-                  <th scope="col" className="border-2 border-deep p-2">Nomor</th>
-                  <th scope="col" className="border-2 border-deep p-2">Kunci</th>
-                  <th scope="col" className="border-2 border-deep p-2">Jawaban murid</th>
-                  <th scope="col" className="border-2 border-deep p-2">Hasil</th>
-                </tr>
-              </thead>
-              <tbody>
-                {report.rows.map((r) => (
-                  <tr key={r.number} className="bg-white">
-                    <th scope="row" className="border-2 border-deep p-2">{r.number}</th>
-                    <td className="border-2 border-deep p-2">{r.expected}</td>
-                    <td className="border-2 border-deep p-2">{r.got || "(kosong)"}</td>
-                    <td className="border-2 border-deep p-2 font-bold">{r.ok ? "Benar" : "Salah"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <button type="button" className="btn btn-secondary" onClick={speakSummary}>
-              <Volume2 size={24} aria-hidden="true" /> Bacakan nilai
+            <button type="button" className="btn btn-secondary w-full" onClick={speakSummary}>
+              <Volume2 size={18} aria-hidden="true" />
+              <span>Bacakan Nilai</span>
             </button>
+
+            <ul className="m-0 flex max-h-[380px] list-none flex-col gap-2.5 overflow-y-auto p-0">
+              {report.rows.map((r) => (
+                <li
+                  key={r.n}
+                  className="rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-sunken)]/50 p-3.5 text-[0.88rem]"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <strong>Nomor {r.n}</strong>
+                    <span
+                      className={`status-chip ${
+                        r.ok ? "status-chip-ok" : "status-chip-review"
+                      }`}
+                    >
+                      {r.ok ? "Benar" : "Salah"}
+                    </span>
+                  </div>
+                  <p className="m-0 mt-1.5">
+                    Jawaban murid: <strong>{r.student}</strong>
+                  </p>
+                  {!r.ok && (
+                    <p className="m-0 mt-0.5 text-muted-theme">
+                      Kunci guru: <strong>{r.expected}</strong>
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
-        </div>
-      </Step>
-    </ol>
+      </aside>
+    </div>
   );
 }

@@ -1,0 +1,79 @@
+{
+ "note": "Credits for the photographs in this folder: photos.mjs credits prints the footer block for the ones the pages use.",
+ "photos": [
+  {
+   "file": "photo-f76856657.jpg",
+   "files": [
+    "photo-f76856657-500.jpg",
+    "photo-f76856657-960.jpg",
+    "photo-f76856657.jpg"
+   ],
+   "id": "f76856657",
+   "alt": "Blue sky white clouds Ukraine",
+   "by": "Podaliriy55",
+   "licence": "CC BY-SA 4.0",
+   "licenceUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+   "page": "https://commons.wikimedia.org/wiki/File:Blue_sky_white_clouds_Ukraine.jpg",
+   "source": "Wikimedia Commons"
+  },
+  {
+   "file": "photo-f185111067-960.jpg",
+   "files": [
+    "photo-f185111067-500.jpg",
+    "photo-f185111067-960.jpg"
+   ],
+   "id": "f185111067",
+   "alt": "Tuna Netra Mengaji",
+   "by": "M Joko Apriyo Putro",
+   "licence": "CC BY-SA 4.0",
+   "licenceUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+   "page": "https://commons.wikimedia.org/wiki/File:Tuna_Netra_Mengaji.jpg",
+   "source": "Wikimedia Commons"
+  },
+  {
+   "file": "photo-f127243053.jpg",
+   "files": [
+    "photo-f127243053-500.jpg",
+    "photo-f127243053-960.jpg",
+    "photo-f127243053.jpg"
+   ],
+   "id": "f127243053",
+   "alt": "White Cumulus Clouds against Blue Sky (4)",
+   "by": "Lance Vanlewen",
+   "licence": "CC BY-SA 4.0",
+   "licenceUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+   "page": "https://commons.wikimedia.org/wiki/File:White_Cumulus_Clouds_against_Blue_Sky_(4).jpg",
+   "source": "Wikimedia Commons"
+  },
+  {
+   "file": "photo-f198178986.jpg",
+   "files": [
+    "photo-f198178986-500.jpg",
+    "photo-f198178986-960.jpg",
+    "photo-f198178986.jpg"
+   ],
+   "id": "f198178986",
+   "alt": "Bright blue sky with scenic white cloud patterns",
+   "by": "Trixia Lao",
+   "licence": "CC0",
+   "licenceUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+   "page": "https://commons.wikimedia.org/wiki/File:Bright_blue_sky_with_scenic_white_cloud_patterns.jpg",
+   "source": "Wikimedia Commons"
+  },
+  {
+   "file": "photo-f67752353.jpg",
+   "files": [
+    "photo-f67752353-500.jpg",
+    "photo-f67752353-960.jpg",
+    "photo-f67752353.jpg"
+   ],
+   "id": "f67752353",
+   "alt": "Reading room for the blind in the Library of Congress, where books and magazines in braille or moon type are always on hand. Several employees of this division are blind LCCN91726122",
+   "by": "National Photo Company Collection",
+   "licence": "Public domain",
+   "licenceUrl": "https://creativecommons.org/publicdomain/mark/1.0/",
+   "page": "https://commons.wikimedia.org/wiki/File:Reading_room_for_the_blind_in_the_Library_of_Congress,_where_books_and_magazines_in_braille_or_moon_type_are_always_on_hand._Several_employees_of_this_division_are_blind_LCCN91726122.jpg",
+   "source": "Wikimedia Commons"
+  }
+ ]
+}

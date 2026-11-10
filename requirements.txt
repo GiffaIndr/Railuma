@@ -1,6 +1,8 @@
 fastapi
 uvicorn[standard]
 python-multipart
-ultralytics
+ultralytics>=8.4
 opencv-python
 numpy
+requests
+pydantic

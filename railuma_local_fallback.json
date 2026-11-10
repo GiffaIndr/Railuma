@@ -1,0 +1,99 @@
+{
+  "sessions": [
+    {
+      "id": "30578a98-2e21-41c7-95f3-4364d185d953",
+      "title": "Sesi Uji Otomatis",
+      "pinned": false,
+      "created_at": "2026-11-10T03:11:14.042762+00:00",
+      "updated_at": "2026-11-10T03:11:14.042762+00:00",
+      "scan_count": 0,
+      "last_preview": "",
+      "needs_review_count": 0
+    },
+    {
+      "id": "edeb4d70-b710-433e-8446-df3e276375bc",
+      "title": "Catatan Braille Hari Ini",
+      "pinned": false,
+      "created_at": "2026-11-10T03:26:46.253131+00:00",
+      "updated_at": "2026-11-10T03:26:46.253131+00:00",
+      "scan_count": 0,
+      "last_preview": "",
+      "needs_review_count": 0
+    },
+    {
+      "id": "ee7bb514-e5a0-4d49-a48a-932b8949ab69",
+      "title": "Catatan Braille Hari Ini",
+      "pinned": false,
+      "created_at": "2026-11-10T03:26:48.646804+00:00",
+      "updated_at": "2026-11-10T03:26:48.646804+00:00",
+      "scan_count": 0,
+      "last_preview": "",
+      "needs_review_count": 0
+    }
+  ],
+  "items": [],
+  "revisions": [],
+  "corrections": [],
+  "users": [
+    {
+      "id": "3a6efa04-2929-4464-855b-e5c9556cf381",
+      "email": "guru_a_37b9b3@sekolah.id",
+      "name": "Guru A",
+      "password_hash": "119b118b3e9b106b4cecdf2b178790df4acddb7016272dce950707e985af8101",
+      "created_at": "2026-11-10T03:28:51.179114+00:00"
+    },
+    {
+      "id": "78ca139f-344a-4b0a-a930-9b5bc22fade2",
+      "email": "guru_b_37b9b3@sekolah.id",
+      "name": "Guru B",
+      "password_hash": "119b118b3e9b106b4cecdf2b178790df4acddb7016272dce950707e985af8101",
+      "created_at": "2026-11-10T03:28:51.196516+00:00"
+    },
+    {
+      "id": "193dca36-efcc-4d52-b51f-c3067496ae0b",
+      "email": "guru_a_a7082c@sekolah.id",
+      "name": "Guru A",
+      "password_hash": "119b118b3e9b106b4cecdf2b178790df4acddb7016272dce950707e985af8101",
+      "created_at": "2026-11-10T03:30:23.111501+00:00"
+    },
+    {
+      "id": "2acd5439-c877-4fd4-88f9-4d3a5d1b76d8",
+      "email": "guru_b_a7082c@sekolah.id",
+      "name": "Guru B",
+      "password_hash": "119b118b3e9b106b4cecdf2b178790df4acddb7016272dce950707e985af8101",
+      "created_at": "2026-11-10T03:30:23.133681+00:00"
+    }
+  ],
+  "tokens": {
+    "local_Sge5HtN-oBZskXtsxDNCHWfDKhS9vGNe": {
+      "id": "3a6efa04-2929-4464-855b-e5c9556cf381",
+      "email": "guru_a_37b9b3@sekolah.id",
+      "name": "Guru A"
+    },
+    "local_cFVKJ9JviucnOuevFJ0-7aIs838riSHy": {
+      "id": "78ca139f-344a-4b0a-a930-9b5bc22fade2",
+      "email": "guru_b_37b9b3@sekolah.id",
+      "name": "Guru B"
+    },
+    "local_jGjXiv8uvNZKXUY7MKBk_ohpO9KAvI0M": {
+      "id": "3a6efa04-2929-4464-855b-e5c9556cf381",
+      "email": "guru_a_37b9b3@sekolah.id",
+      "name": "Guru A"
+    },
+    "local_cQQAP-wP6e2H4H-0DhVJ7XGGaFIdMa0k": {
+      "id": "193dca36-efcc-4d52-b51f-c3067496ae0b",
+      "email": "guru_a_a7082c@sekolah.id",
+      "name": "Guru A"
+    },
+    "local_SMj7NyyabFDHrLjazwl_WMUX6KMg6qCV": {
+      "id": "2acd5439-c877-4fd4-88f9-4d3a5d1b76d8",
+      "email": "guru_b_a7082c@sekolah.id",
+      "name": "Guru B"
+    },
+    "local_o8sbCLg2ezCywjQb3UWt6h5OVg2Ah-bB": {
+      "id": "193dca36-efcc-4d52-b51f-c3067496ae0b",
+      "email": "guru_a_a7082c@sekolah.id",
+      "name": "Guru A"
+    }
+  }
+}

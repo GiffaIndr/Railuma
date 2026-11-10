@@ -33,25 +33,25 @@ export const exportToPDF = (mainText, secondaryText = "", title = "Dokumen Brail
 <meta charset="utf-8">
 <title>${escapeHtml(title)}</title>
 <style>
-  body { font-family: 'Segoe UI', Arial, sans-serif; padding: 40px; color: #0a2a2b; }
-  h1 { color: #1b6566; border-bottom: 3px solid #1b6566; padding-bottom: 10px; margin-bottom: 5px; }
-  .meta { font-size: 13px; color: #2f4f50; margin-bottom: 30px; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; padding: 40px; color: #0a1b2e; }
+  h1 { color: #0856a6; border-bottom: 3px solid #0856a6; padding-bottom: 10px; margin-bottom: 5px; }
+  .meta { font-size: 13px; color: #3a4d63; margin-bottom: 30px; }
   .section { margin-bottom: 25px; }
-  .section-title { font-weight: bold; font-size: 14px; color: #2f4f50; margin-bottom: 6px; }
+  .section-title { font-weight: bold; font-size: 14px; color: #3a4d63; margin-bottom: 6px; }
   .braille-box {
-    background: #fff0c5; padding: 20px; border-radius: 10px;
+    background: #e8f4fd; padding: 20px; border-radius: 10px;
     font-size: 36px; letter-spacing: 0.15em; line-height: 1.4;
-    border: 2px solid #1b6566; word-break: break-all; white-space: pre-wrap;
+    border: 2px solid #0856a6; word-break: break-all; white-space: pre-wrap;
     ${isReglet ? "text-align: right;" : ""}
   }
   .braille-box span { display: inline-block; ${isReglet ? "transform: scaleX(-1);" : ""} }
-  .text-box { background: #fff; padding: 15px; border-radius: 8px; font-size: 16px; border: 2px solid #1b6566; white-space: pre-wrap; }
-  .badge { display: inline-block; background: #0a2a2b; color: #fff0c5; font-size: 13px; padding: 4px 10px; border-radius: 6px; font-weight: bold; margin-bottom: 10px; }
+  .text-box { background: #fff; padding: 15px; border-radius: 8px; font-size: 16px; border: 2px solid #0856a6; white-space: pre-wrap; }
+  .badge { display: inline-block; background: #0a1b2e; color: #e6ff1f; font-size: 13px; padding: 4px 10px; border-radius: 6px; font-weight: bold; margin-bottom: 10px; }
 </style>
 </head>
 <body>
   <h1>${escapeHtml(title)}</h1>
-  <div class="meta">Dibuat pada: ${escapeHtml(new Date().toLocaleString("id-ID"))} | Railuma</div>
+  <div class="meta">Dibuat pada: ${escapeHtml(new Date().toLocaleString("id-ID"))} | Railuma Open Sky</div>
   ${isReglet ? '<div class="badge">MODE REGLET (terbalik, arah tulis kanan ke kiri)</div>' : ""}
   <div class="section">
     <div class="section-title">Hasil:</div>

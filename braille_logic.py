@@ -1,19 +1,4 @@
-"""Mengubah kotak deteksi YOLO (satu kotak = satu sel Braille) menjadi teks.
-
-Perbaikan dibanding versi lama (process_braille_detections):
-  * Baris dikelompokkan dengan TITIK TENGAH kotak (bukan y1), jadi kotak yang
-    ketat di sekitar titik (huruf 'a' pendek, huruf 'l' tinggi) tidak memecah baris.
-  * Kemiringan kertas diperkirakan lalu dikoreksi (deskew) sebelum baris dibentuk.
-  * Spasi ditentukan dari JARAK ANTAR-PUSAT SEL relatif terhadap jarak sel normal
-    (pitch), bukan dari lebar kotak yang berubah-ubah.
-  * Kotak ganda pada sel yang sama dibuang (dengan mempertahankan yang paling yakin).
-  * Tanda angka berhenti saat muncul karakter non-angka; tanda kapital didukung.
-  * Setiap huruf membawa skor keyakinan (confidence) untuk tahap koreksi kata.
-
-Nama label khusus (tanda angka, kapital, spasi) disesuaikan dengan nama kelas
-di model Anda lewat konstanta di bawah. Jalankan `python inspect_model.py`
-untuk melihat nama kelas model Anda.
-"""
+"""Mengubah kotak deteksi YOLO (satu kotak = satu sel Braille) menjadi teks dan poligon."""
 from __future__ import annotations
 
 import math
@@ -21,30 +6,24 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-# ----------------------------------------------------------------------------
-# KONFIGURASI (sesuaikan dengan nama kelas di model Anda)
-# ----------------------------------------------------------------------------
+from koreksi import alternatif_sel, pola_titik
+
 NUMBER_LABELS = {"number_sign", "numbersign", "number", "num", "#", "tanda_angka", "angka"}
 CAPITAL_LABELS = {"capital", "capital_sign", "cap", "kapital", "tanda_kapital"}
 SPACE_LABELS = {"space", "spasi"}
 IGNORE_LABELS: set[str] = set()
 
-# True  : kelas 'A' dan 'a' dianggap sama (perilaku lama, huruf kecil semua)
-# False : huruf besar dari model dipertahankan apa adanya
 MERGE_CASE = True
 
 NUMBER_MAP = {"a": "1", "b": "2", "c": "3", "d": "4", "e": "5",
               "f": "6", "g": "7", "h": "8", "i": "9", "j": "0"}
 
-RASIO_BARIS = 0.6       # selisih y-tengah > 0.6 x tinggi sel -> baris baru
-RASIO_SPASI = 1.5       # jarak pusat > 1.5 x pitch sel -> ada spasi
-RASIO_DUPLIKAT = 0.45   # dua pusat lebih dekat dari 0.45 x lebar sel -> duplikat
-MAX_SKEW = 12.0         # derajat maksimum yang dicari saat deskew
+RASIO_BARIS = 0.6
+RASIO_SPASI = 1.5
+RASIO_DUPLIKAT = 0.45
+MAX_SKEW = 12.0
 
 
-# ----------------------------------------------------------------------------
-# STRUKTUR DATA
-# ----------------------------------------------------------------------------
 @dataclass
 class Det:
     x1: float
@@ -73,7 +52,7 @@ class Det:
 
 @dataclass
 class Kata:
-    huruf: list = field(default_factory=list)  # [(karakter, confidence), ...]
+    huruf: list = field(default_factory=list)
 
     @property
     def teks(self) -> str:
@@ -90,10 +69,11 @@ class Kata:
 
 @dataclass
 class HasilBaca:
-    baris: list          # list[list[Kata]]
-    sudut: float = 0.0   # kemiringan yang dikoreksi (derajat)
-    pitch: float = 0.0   # jarak antar-pusat sel normal (piksel)
+    baris: list
+    sudut: float = 0.0
+    pitch: float = 0.0
     n_sel: int = 0
+    sel_detail: list = field(default_factory=list)
 
     def teks(self) -> str:
         return "\n".join(" ".join(k.teks for k in b) for b in self.baris)
@@ -107,15 +87,11 @@ class HasilBaca:
 @dataclass
 class _Sel:
     det: Det
-    x: float  # pusat x setelah deskew
-    y: float  # pusat y setelah deskew
+    x: float
+    y: float
 
 
-# ----------------------------------------------------------------------------
-# LANGKAH-LANGKAH
-# ----------------------------------------------------------------------------
 def dets_dari_boxes(boxes, names) -> list:
-    """Ubah ultralytics `r.boxes` menjadi list Det."""
     hasil = []
     for b in boxes:
         x1, y1, x2, y2 = b.xyxy[0].tolist()
@@ -124,7 +100,6 @@ def dets_dari_boxes(boxes, names) -> list:
 
 
 def hapus_duplikat(dets: list) -> list:
-    """Buang kotak ganda pada sel yang sama; simpan yang confidence-nya tertinggi."""
     if len(dets) < 2:
         return list(dets)
     w_ref = float(np.median([d.w for d in dets]))
@@ -137,8 +112,6 @@ def hapus_duplikat(dets: list) -> list:
 
 
 def estimasi_kemiringan(dets: list, h_ref: float) -> float:
-    """Cari sudut yang membuat titik-tengah sel paling 'menumpuk' per baris
-    (projection profile). Mengembalikan derajat; 0 jika tidak meyakinkan."""
     if len(dets) < 6:
         return 0.0
     pts = np.array([[d.cx, d.cy] for d in dets], dtype=float)
@@ -184,16 +157,28 @@ def _estimasi_pitch(baris: list):
 
 
 def _kanon(label: str):
-    """Kembalikan (label_asli_dirapikan, label_huruf_kecil)."""
     rapi = label.strip()
     return rapi, rapi.lower()
+
+
+def _poligon_sel(det: Det, sudut_deg: float) -> list[list[float]]:
+    """Kembalikan 4 titik sudut poligon sel yang diputar mengikuti sudut kemiringan baris."""
+    cx, cy = det.cx, det.cy
+    hw, hh = max(4.0, det.w / 2.0), max(6.0, det.h / 2.0)
+    r = math.radians(-sudut_deg)
+    c, s = math.cos(r), math.sin(r)
+    sudut_lokal = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+    return [
+        [round(cx + dx * c - dy * s, 1), round(cy + dx * s + dy * c, 1)]
+        for dx, dy in sudut_lokal
+    ]
 
 
 def baca_deteksi(dets: list, deskew: bool = True) -> HasilBaca:
     dets = [d for d in dets if d.w > 0 and d.h > 0]
     dets = hapus_duplikat(dets)
     if not dets:
-        return HasilBaca([], 0.0, 0.0, 0)
+        return HasilBaca([], 0.0, 0.0, 0, [])
 
     h_ref = float(np.percentile([d.h for d in dets], 80))
     sudut = estimasi_kemiringan(dets, h_ref) if deskew else 0.0
@@ -205,7 +190,10 @@ def baca_deteksi(dets: list, deskew: bool = True) -> HasilBaca:
     pitch_global = _estimasi_pitch(baris_sel) or 1.3 * float(np.median([d.w for d in dets]))
 
     hasil_baris = []
-    for row in baris_sel:
+    sel_detail = []
+    idx_sel = 0
+
+    for idx_baris, row in enumerate(baris_sel):
         pitch = _estimasi_pitch([row]) if len(row) >= 8 else None
         pitch = pitch or pitch_global
         batas_spasi = RASIO_SPASI * pitch
@@ -251,11 +239,30 @@ def baca_deteksi(dets: list, deskew: bool = True) -> HasilBaca:
                 ch = ch.upper()
                 kapital = False
             kata.huruf.append((ch, sl.det.conf))
+
+            konf_bulat = round(float(sl.det.conf), 3)
+            sel_detail.append({
+                "id": f"c{idx_sel}",
+                "line": idx_baris,
+                "col": i,
+                "symbol": ch,
+                "pattern": pola_titik(ch),
+                "conf": konf_bulat,
+                "flag": "ok" if konf_bulat >= 0.65 else "review",
+                "x1": round(sl.det.x1, 1),
+                "y1": round(sl.det.y1, 1),
+                "x2": round(sl.det.x2, 1),
+                "y2": round(sl.det.y2, 1),
+                "polygon": _poligon_sel(sl.det, sudut),
+                "alternates": alternatif_sel(ch, konf_bulat),
+            })
+            idx_sel += 1
+
         tutup()
         if kata_baris:
             hasil_baris.append(kata_baris)
 
-    return HasilBaca(hasil_baris, sudut, pitch_global, len(dets))
+    return HasilBaca(hasil_baris, sudut, pitch_global, len(dets), sel_detail)
 
 
 def baca_boxes(boxes, names, deskew: bool = True) -> HasilBaca:
@@ -263,5 +270,4 @@ def baca_boxes(boxes, names, deskew: bool = True) -> HasilBaca:
 
 
 def process_braille_detections(boxes, model_names) -> str:
-    """Nama lama, dipertahankan agar skrip lama tetap jalan."""
     return baca_boxes(boxes, model_names).teks()

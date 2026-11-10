@@ -1,39 +1,22 @@
 import { useRef, useState } from "react";
-import { Mic, MicOff, Volume2, Download, FileText, Trash2, TriangleAlert } from "lucide-react";
+import { Download, FileText, Mic, MicOff, Trash2, TriangleAlert, Volume2 } from "lucide-react";
 import { useA11y } from "../context/useA11y";
 import { exportToPDF, exportToTXT } from "../utils/exporter";
 import { speakText } from "../utils/speech";
-import Step from "./Step";
-
-// Kamus teks ke Braille Unicode (Grade 1 sederhana)
-const brailleDict = {
-  a: "⠁", b: "⠃", c: "⠉", d: "⠙", e: "⠑", f: "⠋", g: "⠛", h: "⠓", i: "⠊", j: "⠚",
-  k: "⠅", l: "⠇", m: "⠍", n: "⠝", o: "⠕", p: "⠏", q: "⠟", r: "⠗", s: "⠎", t: "⠞",
-  u: "⠥", v: "⠧", w: "⠺", x: "⠭", y: "⠽", z: "⠵",
-  1: "⠼⠁", 2: "⠼⠃", 3: "⠼⠉", 4: "⠼⠙", 5: "⠼⠑", 6: "⠼⠋", 7: "⠼⠛", 8: "⠼⠓", 9: "⠼⠊", 0: "⠼⠚",
-  " ": " ", ",": "⠂", ".": "⠲", "?": "⠦", "!": "⠖", "\n": "\n",
-};
-
-const textToBraille = (text) =>
-  text
-    .toLowerCase()
-    .split("")
-    .map((c) => brailleDict[c] || c)
-    .join("");
+import { reverseLinesForReglet, textToBraille } from "../utils/braille";
 
 export default function VoiceTranslator() {
   const { announce } = useA11y();
   const [text, setText] = useState("");
   const [listening, setListening] = useState(false);
-  const [format, setFormat] = useState("normal"); // normal | reglet
+  const [format, setFormat] = useState("normal");
   const [micError, setMicError] = useState("");
   const [pdfBlocked, setPdfBlocked] = useState(false);
   const recRef = useRef(null);
 
   const isReglet = format === "reglet";
   const braille = textToBraille(text);
-  // Reglet: urutan dibalik dan tiap karakter dicerminkan (untuk menulis dengan reglet)
-  const shown = isReglet ? [...braille].reverse().join("") : braille;
+  const shown = isReglet ? reverseLinesForReglet(braille) : braille;
   const hasText = text.trim() !== "";
 
   const toggleMic = () => {
@@ -46,7 +29,9 @@ export default function VoiceTranslator() {
     }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
-      setMicError("Browser ini belum mendukung pengenalan suara. Gunakan Chrome atau Edge, atau ketik teksnya.");
+      setMicError(
+        "Browser ini belum mendukung pengenalan suara. Gunakan Chrome atau Edge, atau ketik teksnya.",
+      );
       return;
     }
     const rec = new SR();
@@ -58,7 +43,8 @@ export default function VoiceTranslator() {
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (event.results[i].isFinal) finalText += event.results[i][0].transcript;
       }
-      if (finalText) setText((prev) => (prev ? `${prev} ${finalText.trim()}` : finalText.trim()));
+      if (finalText)
+        setText((prev) => (prev ? `${prev} ${finalText.trim()}` : finalText.trim()));
     };
     rec.onerror = (event) => {
       setListening(false);
@@ -83,91 +69,156 @@ export default function VoiceTranslator() {
   const savePdf = () => {
     const ok = exportToPDF(shown, text, "Hasil Suara ke Braille", isReglet);
     setPdfBlocked(!ok);
-    announce(ok ? "Jendela cetak dibuka. Pilih Simpan sebagai PDF." : "Jendela cetak diblokir browser.");
+    announce(
+      ok
+        ? "Jendela cetak dibuka. Pilih Simpan sebagai PDF."
+        : "Jendela cetak diblokir browser.",
+    );
   };
 
   return (
-    <ol className="m-0 flex list-none flex-col gap-6 p-0">
-      <Step number={1} title="Ucapkan atau ketik kalimat">
-        <button
-          type="button"
-          className={`btn ${listening ? "mic-live" : "btn-primary"}`}
-          onClick={toggleMic}
-          aria-pressed={listening}
-        >
-          {listening ? <MicOff size={24} aria-hidden="true" /> : <Mic size={24} aria-hidden="true" />}
-          {listening ? "Berhenti bicara" : "Mulai bicara"}
-        </button>
-
-        {micError && (
-          <div role="alert" className="alert-box">
-            <p className="m-0 flex items-start gap-3">
-              <TriangleAlert size={28} className="flex-none" aria-hidden="true" />
-              <span>
-                <strong>Peringatan.</strong> {micError}
-              </span>
-            </p>
+    <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
+      {/* Kolom Kiri (6/12): Input Suara/Teks & Pilihan Format */}
+      <div className="flex flex-col gap-5 lg:col-span-6">
+        <section aria-labelledby="judul-input-konversi" className="card flex flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-3">
+            <h2 id="judul-input-konversi" className="m-0 text-[1.08rem] font-bold">
+              1. Ucapkan atau Ketik Kalimat
+            </h2>
+            <span className="status-chip">Bahasa Indonesia</span>
           </div>
-        )}
 
-        <div className="flex flex-col gap-2">
-          <label htmlFor="teks" className="font-bold">
-            Teks
-          </label>
-          <textarea id="teks" rows={4} value={text} onChange={(e) => setText(e.target.value)} className="field" />
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <button type="button" className="btn btn-secondary" disabled={!hasText} onClick={() => speakText(text)}>
-            <Volume2 size={24} aria-hidden="true" /> Bacakan teks
-          </button>
           <button
             type="button"
-            className="btn btn-secondary"
-            disabled={!hasText}
-            onClick={() => {
-              setText("");
-              announce("Teks dihapus.");
-            }}
+            className={`btn w-full ${listening ? "mic-live" : "btn-primary"}`}
+            onClick={toggleMic}
+            aria-pressed={listening}
           >
-            <Trash2 size={24} aria-hidden="true" /> Hapus teks
+            {listening ? <MicOff size={20} aria-hidden="true" /> : <Mic size={20} aria-hidden="true" />}
+            <span>{listening ? "Berhenti Bicara" : "Mulai Dikte Suara"}</span>
           </button>
+
+          {micError && (
+            <div role="alert" className="alert-box text-[0.88rem]">
+              <p className="m-0 flex items-start gap-2.5">
+                <TriangleAlert size={18} className="mt-0.5 flex-none" aria-hidden="true" />
+                <span>
+                  <strong>Peringatan:</strong> {micError}
+                </span>
+              </p>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-2">
+            <label htmlFor="teks" className="text-[0.88rem] font-semibold">
+              Teks Masukan
+            </label>
+            <textarea
+              id="teks"
+              rows={4}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Ketik kalimat atau angka di sini..."
+              className="field"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={!hasText}
+              onClick={() => speakText(text)}
+            >
+              <Volume2 size={18} aria-hidden="true" />
+              <span>Bacakan Teks</span>
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={!hasText}
+              onClick={() => {
+                setText("");
+                announce("Teks dihapus.");
+              }}
+            >
+              <Trash2 size={18} aria-hidden="true" />
+              <span>Hapus Teks</span>
+            </button>
+          </div>
+        </section>
+
+        <section aria-labelledby="judul-format-braille" className="card flex flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-3">
+            <h2 id="judul-format-braille" className="m-0 text-[1.08rem] font-bold">
+              2. Pilih Format Titik Braille
+            </h2>
+            <span className="status-chip">Baca vs Tusuk Stylus</span>
+          </div>
+
+          <fieldset className="m-0 flex flex-col gap-3 border-0 p-0">
+            <legend className="sr-only">Format Braille</legend>
+            <label className="radio-card">
+              <input
+                type="radio"
+                name="format"
+                value="normal"
+                checked={!isReglet}
+                onChange={() => pick("normal", "Braille biasa")}
+              />
+              <span>
+                <strong>Braille Biasa (Kiri ke Kanan)</strong>
+                <br />
+                <span className="text-[0.86rem] text-muted-theme">
+                  Urutan baca standar dari kiri ke kanan, cocok untuk layar dan embosser.
+                </span>
+              </span>
+            </label>
+
+            <label className="radio-card">
+              <input
+                type="radio"
+                name="format"
+                value="reglet"
+                checked={isReglet}
+                onChange={() => pick("reglet", "Reglet terbalik")}
+              />
+              <span>
+                <strong>Reglet (Terbalik per Baris)</strong>
+                <br />
+                <span className="text-[0.86rem] text-muted-theme">
+                  Dicerminkan per baris untuk panduan menusuk stylus Reglet dari belakang kertas.
+                </span>
+              </span>
+            </label>
+          </fieldset>
+        </section>
+      </div>
+
+      {/* Kolom Kanan (6/12): Panel Hasil Konversi & Ekspor Lengket */}
+      <aside
+        aria-labelledby="judul-hasil-konversi"
+        className="card flex flex-col gap-4 lg:sticky lg:top-6 lg:col-span-6"
+      >
+        <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-3">
+          <h2 id="judul-hasil-konversi" className="m-0 text-[1.08rem] font-bold">
+            3. Hasil Pola Braille &amp; Ekspor
+          </h2>
+          <span className="status-chip">
+            {isReglet ? "Mode Reglet" : "Mode Standar"} · {text.length} karakter
+          </span>
         </div>
-      </Step>
 
-      <Step number={2} title="Pilih format Braille">
-        <fieldset className="m-0 flex flex-col gap-3.5 border-0 p-0">
-          <legend className="mb-3 font-bold">Format Braille</legend>
-          <label className="radio-card">
-            <input type="radio" name="format" value="normal" checked={!isReglet} onChange={() => pick("normal", "Braille biasa")} />
-            <span>
-              <strong>Braille biasa</strong>
-              <br />
-              <span className="text-[0.9rem] text-muted">Dibaca dari kiri ke kanan, seperti hasil cetak.</span>
-            </span>
-          </label>
-          <label className="radio-card">
-            <input type="radio" name="format" value="reglet" checked={isReglet} onChange={() => pick("reglet", "Reglet terbalik")} />
-            <span>
-              <strong>Reglet (terbalik)</strong>
-              <br />
-              <span className="text-[0.9rem] text-muted">Dicerminkan, untuk menulis sendiri dengan reglet dari kanan ke kiri.</span>
-            </span>
-          </label>
-        </fieldset>
-        <p className="m-0 text-[0.9rem] text-muted">Pindah pilihan dengan tombol <kbd>↑</kbd> <kbd>↓</kbd>.</p>
-      </Step>
-
-      <Step number={3} title="Hasil dan simpan">
         {hasText ? (
           <>
             <p className="sr-only">
-              Braille sudah dibuat untuk {text.length} karakter, format {isReglet ? "Reglet terbalik" : "Braille biasa"}.
-              Tekan Simpan sebagai PDF untuk mendapatkan hasilnya.
+              Braille sudah dibuat untuk {text.length} karakter, format{" "}
+              {isReglet ? "Reglet terbalik" : "Braille biasa"}. Tekan Simpan sebagai PDF untuk
+              mendapatkan hasilnya.
             </p>
             <div
               aria-hidden="true"
-              className={`ok-box flex flex-wrap break-all text-[2.2rem] leading-[1.6] tracking-[0.2em] ${
+              className={`surface-subtle flex min-h-[160px] flex-wrap break-all p-5 text-[2.1rem] leading-[1.6] tracking-[0.18em] ${
                 isReglet ? "justify-end" : "justify-start"
               }`}
             >
@@ -176,43 +227,51 @@ export default function VoiceTranslator() {
                   <span key={i} className="basis-full" />
                 ) : (
                   <span key={i} className={`inline-block ${isReglet ? "scale-x-[-1]" : ""}`}>
-                    {c === " " ? "  " : c}
+                    {c === " " ? "\u00A0\u00A0" : c}
                   </span>
                 ),
               )}
             </div>
           </>
         ) : (
-          <p className="m-0 text-muted">Belum ada hasil. Ucapkan atau ketik kalimat di langkah 1.</p>
+          <div className="surface-subtle flex min-h-[160px] items-center justify-center p-5 text-center text-[0.9rem] text-muted-theme">
+            Belum ada hasil konversi. Ucapkan atau ketik kalimat di kolom kiri.
+          </div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
           <button
             type="button"
             className="btn btn-primary"
             disabled={!hasText}
             onClick={savePdf}
           >
-            <Download size={24} aria-hidden="true" /> Simpan sebagai PDF
+            <Download size={18} aria-hidden="true" />
+            <span>Simpan sebagai PDF</span>
           </button>
           <button
             type="button"
             className="btn btn-secondary"
             disabled={!hasText}
             onClick={() => {
-              exportToTXT(`Teks asli: ${text}\nBraille (${isReglet ? "Reglet" : "biasa"}): ${shown}`, "Hasil_Suara_Braille.txt");
-              announce("File teks disimpan.");
+              exportToTXT(
+                `Teks asli: ${text}\nBraille (${isReglet ? "Reglet" : "biasa"}): ${shown}`,
+                "Hasil_Suara_Braille.txt",
+              );
+              announce("Berkas teks disimpan.");
             }}
           >
-            <FileText size={24} aria-hidden="true" /> Simpan sebagai teks
+            <FileText size={18} aria-hidden="true" />
+            <span>Simpan sebagai TXT</span>
           </button>
         </div>
+
         {pdfBlocked && (
-          <div role="alert" className="alert-box">
+          <div role="alert" className="alert-box text-[0.88rem]">
             Jendela cetak diblokir browser. Izinkan pop-up untuk situs ini, lalu coba lagi.
           </div>
         )}
-      </Step>
-    </ol>
+      </aside>
+    </div>
   );
 }
