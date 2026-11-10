@@ -1,6 +1,12 @@
 export const API_URL =
   import.meta.env.VITE_API_URL ||
-  (import.meta.env.DEV ? "http://127.0.0.1:8000" : "");
+  (import.meta.env.DEV
+    ? (typeof window !== "undefined" &&
+       window.location.hostname !== "localhost" &&
+       window.location.hostname !== "127.0.0.1"
+        ? `http://${window.location.hostname}:8000`
+        : "http://127.0.0.1:8000")
+    : "");
 
 export const CLAHE_KEY = "railuma-clahe";
 export const SAVE_IMAGE_KEY = "railuma-save-image";
@@ -84,7 +90,7 @@ export const getWsBaseUrl = () => {
   return "ws://127.0.0.1:8000";
 };
 
-async function fetchJson(url, options = {}, timeoutMs = 20000) {
+async function fetchJson(url, options = {}, timeoutMs = 35000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const token = getAuthToken();
@@ -111,6 +117,18 @@ async function fetchJson(url, options = {}, timeoutMs = 20000) {
       throw err;
     }
     return response.json();
+  } catch (err) {
+    if (err.name === "AbortError") {
+      const abortErr = new Error("Koneksi ke layanan server memerlukan waktu lebih lama (cold-start). Silakan coba sesaat lagi.");
+      abortErr.status = 504;
+      throw abortErr;
+    }
+    if (err.message && err.message.toLowerCase().includes("failed to fetch")) {
+      const netErr = new Error("Tidak dapat terhubung ke backend Railuma. Pastikan koneksi internet aktif.");
+      netErr.status = 503;
+      throw netErr;
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -121,7 +139,7 @@ export const registerUser = async ({ name = "", email, password }) => {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, email, password }),
-  });
+  }, 30000);
   if (res.access_token && res.user) {
     setAuthSession(res.access_token, res.user);
   }
@@ -133,7 +151,7 @@ export const loginUser = async ({ email, password }) => {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
-  });
+  }, 30000);
   if (res.access_token && res.user) {
     setAuthSession(res.access_token, res.user);
   }
@@ -141,7 +159,7 @@ export const loginUser = async ({ email, password }) => {
 };
 
 export const fetchCurrentUser = async () => {
-  const res = await fetchJson(`${API_URL}/api/v1/auth/me`, {}, 8000);
+  const res = await fetchJson(`${API_URL}/api/v1/auth/me`, {}, 25000);
   if (res.user) {
     setAuthSession(getAuthToken(), res.user);
   }
@@ -151,7 +169,7 @@ export const fetchCurrentUser = async () => {
 export const logoutUser = async () => {
   try {
     if (getAuthToken()) {
-      await fetchJson(`${API_URL}/api/v1/auth/logout`, { method: "POST" }, 6000);
+      await fetchJson(`${API_URL}/api/v1/auth/logout`, { method: "POST" }, 15000);
     }
   } catch {
     // tetap hapus token lokal
@@ -167,34 +185,34 @@ export const translateBrailleImage = async (imageBlob) => {
   return fetchJson(`${API_URL}/translate/${query}`, {
     method: "POST",
     body: formData,
-  });
+  }, 45000);
 };
 
-export const fetchHealth = async () => fetchJson(`${API_URL}/api/v1/health`, {}, 6000);
+export const fetchHealth = async () => fetchJson(`${API_URL}/api/v1/health`, {}, 30000);
 
-export const listSessions = async () => fetchJson(`${API_URL}/api/v1/sessions`, {}, 10000);
+export const listSessions = async () => fetchJson(`${API_URL}/api/v1/sessions`, {}, 30000);
 
 export const createSession = async (title = "Sesi Pindai Baru") =>
   fetchJson(`${API_URL}/api/v1/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title }),
-  });
+  }, 30000);
 
 export const getSessionDetail = async (sessionId) =>
-  fetchJson(`${API_URL}/api/v1/sessions/${encodeURIComponent(sessionId)}`, {}, 10000);
+  fetchJson(`${API_URL}/api/v1/sessions/${encodeURIComponent(sessionId)}`, {}, 30000);
 
 export const updateSession = async (sessionId, patch) =>
   fetchJson(`${API_URL}/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
-  });
+  }, 25000);
 
 export const deleteSession = async (sessionId) =>
   fetchJson(`${API_URL}/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
     method: "DELETE",
-  });
+  }, 25000);
 
 export const createSessionScan = async (
   sessionId,
@@ -220,7 +238,7 @@ export const createSessionScan = async (
   return fetchJson(`${API_URL}/api/v1/sessions/${encodeURIComponent(sessionId)}/scans`, {
     method: "POST",
     body: formData,
-  });
+  }, 60000);
 };
 
 export const patchScanItem = async (itemId, payload) =>
