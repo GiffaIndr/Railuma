@@ -8,11 +8,34 @@ export const API_URL =
         : "http://127.0.0.1:8000")
     : "");
 
+export const SUPABASE_URL = "https://rkcvkddbccpmhodryspm.supabase.co";
 export const CLAHE_KEY = "railuma-clahe";
 export const SAVE_IMAGE_KEY = "railuma-save-image";
 export const DATASET_CONSENT_KEY = "railuma-dataset-consent";
 export const AUTH_TOKEN_KEY = "railuma-auth-token";
 export const AUTH_USER_KEY = "railuma-auth-user";
+
+export const signInWithGoogle = () => {
+  if (typeof window === "undefined") return;
+  const redirectUrl = `${window.location.origin}${window.location.pathname}`;
+  window.location.href = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectUrl)}`;
+};
+
+export const parseOAuthHash = () => {
+  if (typeof window === "undefined") return null;
+  const hash = window.location.hash.startsWith("#")
+    ? window.location.hash.substring(1)
+    : window.location.hash;
+  if (!hash) return null;
+  const params = new URLSearchParams(hash);
+  const accessToken = params.get("access_token");
+  if (!accessToken) return null;
+  return {
+    access_token: accessToken,
+    refresh_token: params.get("refresh_token") || "",
+    expires_in: params.get("expires_in") || "",
+  };
+};
 
 export const getAuthToken = () => {
   try {

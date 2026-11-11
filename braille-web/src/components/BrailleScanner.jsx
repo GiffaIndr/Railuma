@@ -39,6 +39,9 @@ import { createStabilizer } from "../utils/stabilizer";
 import { exportToPDF, exportToTXT } from "../utils/exporter";
 import { getPatternForSymbol } from "../utils/braille";
 import BrailleCellDiagram from "./BrailleCellDiagram";
+import Tooltip from "./Tooltip";
+import EmptyState from "./EmptyState";
+import { useToast } from "./Toast";
 
 function formatModelTitle(rawModel) {
   if (!rawModel) return "YOLOv8s";
@@ -71,6 +74,7 @@ export default function BrailleScanner({
     captureFrame,
   } = useCamera();
   const { announce } = useA11y();
+  const toast = useToast();
 
   // Sesi dan item riwayat (Supabase)
   const [sessions, setSessions] = useState([]);
@@ -668,8 +672,10 @@ export default function BrailleScanner({
       await loadSessionsList(baru.id, false);
       setActiveSessionId(baru.id);
       announce(`${title} dibuat.`);
+      toast.success(`${title} berhasil dibuat.`);
     } catch (err) {
       console.error(err);
+      toast.error("Gagal membuat sesi baru.");
     }
   };
 
@@ -678,8 +684,10 @@ export default function BrailleScanner({
       await updateSession(ses.id, { pinned: !ses.pinned });
       await loadSessionsList(activeSessionId, false);
       announce(ses.pinned ? "Semat sesi dilepas." : "Sesi disematkan di atas.");
+      toast.info(ses.pinned ? "Semat sesi dilepas." : "Sesi disematkan di atas.");
     } catch (err) {
       console.error(err);
+      toast.error("Gagal mengubah status sematan sesi.");
     }
   };
 
@@ -694,8 +702,10 @@ export default function BrailleScanner({
       await loadSessionsList(activeSessionId, false);
       if (sesId === activeSessionId) await loadActiveSessionDetail(sesId);
       announce("Nama sesi diperbarui.");
+      toast.success("Nama sesi berhasil diperbarui.");
     } catch (err) {
       console.error(err);
+      toast.error("Gagal mengubah nama sesi.");
     }
   };
 
@@ -710,8 +720,10 @@ export default function BrailleScanner({
         if (!nextId) await loadSessionsList();
       }
       announce(`Sesi ${ses.title} dihapus.`);
+      toast.success(`Sesi "${ses.title}" berhasil dihapus.`);
     } catch (err) {
       console.error(err);
+      toast.error("Gagal menghapus sesi.");
     }
   };
 
@@ -1077,21 +1089,13 @@ export default function BrailleScanner({
                 </div>
               </div>
             ) : (
-              <div className="rounded-[14px] bg-[var(--surface-sunken)] flex flex-col items-start gap-3 p-5 sm:p-6">
-                <strong className="text-[0.98rem]">Belum ada tangkapan di sesi ini</strong>
-                <p className="m-0 text-[0.86rem] leading-relaxed text-muted-theme">
-                  Arahkan kamera ke lembaran Braille atau unggah foto untuk melihat hasil bacaan dan
-                  diagram 6-titik di sini.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => switchSubView("scan")}
-                  className="btn btn-primary btn-sm mt-1 !min-h-[40px]"
-                >
-                  <Camera size={15} aria-hidden="true" />
-                  <span>Mulai Pindai Sekarang</span>
-                </button>
-              </div>
+              <EmptyState
+                icon={Camera}
+                title="Belum ada bacaan di sesi ini"
+                description="Arahkan kamera ke lembaran Braille atau unggah foto untuk melihat hasil bacaan dan diagram 6-titik di sini."
+                actionLabel="Mulai Pindai Sekarang"
+                onAction={() => switchSubView("scan")}
+              />
             )}
           </section>
         </div>
@@ -1312,19 +1316,13 @@ export default function BrailleScanner({
           )}
 
           {sessionItems.length === 0 ? (
-            <div className="surface-subtle flex flex-col items-start gap-3 p-6">
-              <strong>Belum ada hasil pindai di sesi ini.</strong>
-              <p className="m-0 text-[0.9rem] text-muted-theme">
-                Arahkan kamera ke tulisan Braille atau unggah berkas foto di Ruang Scan.
-              </p>
-              <button
-                type="button"
-                onClick={() => switchSubView("scan")}
-                className="btn btn-primary btn-sm"
-              >
-                Buka Ruang Scan
-              </button>
-            </div>
+            <EmptyState
+              icon={Camera}
+              title="Belum ada hasil pindai di sesi ini"
+              description="Arahkan kamera ke tulisan Braille atau unggah berkas foto di Ruang Scan untuk memulai pencatatan."
+              actionLabel="Buka Ruang Scan"
+              onAction={() => switchSubView("scan")}
+            />
           ) : (
             <ol className="m-0 flex list-none flex-col gap-3.5 p-0">
               {sessionItems.map((it, idx) => {
@@ -1417,7 +1415,37 @@ export default function BrailleScanner({
   // (Toolbar Rapi di HP & Desktop, Tanpa Label Monospace Kaku)
   // ============================================================================
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-5">
+      {/* JEJAK NAVIGASI RUANG SCAN */}
+      <nav
+        aria-label="Jejak Navigasi Sesi"
+        className="flex items-center gap-1.5 text-xs font-medium text-muted-theme px-1"
+      >
+        <button
+          type="button"
+          onClick={() => switchSubView("beranda")}
+          className="hover:text-[var(--text)] transition-colors border-0 bg-transparent p-0 cursor-pointer font-medium"
+        >
+          Studio
+        </button>
+        <span aria-hidden="true" className="opacity-40">/</span>
+        <button
+          type="button"
+          onClick={() => switchSubView("sesi")}
+          className="hover:text-[var(--text)] transition-colors border-0 bg-transparent p-0 cursor-pointer font-medium"
+        >
+          Riwayat Sesi
+        </button>
+        {activeSession?.title && (
+          <>
+            <span aria-hidden="true" className="opacity-40">/</span>
+            <span className="font-semibold text-[var(--text)] truncate max-w-[200px] sm:max-w-[320px]">
+              {activeSession.title}
+            </span>
+          </>
+        )}
+      </nav>
+
       {/* DECK KONTROL TERPADU RUANG SCAN */}
       <div className="rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface)] p-3.5 sm:p-5 shadow-sm">
         <div className="flex flex-col gap-3.5">
@@ -1519,39 +1547,47 @@ export default function BrailleScanner({
                 role="group"
                 aria-label="Pilih sumber kamera"
               >
-                <button
-                  type="button"
-                  aria-pressed={sourceMode === "webcam"}
-                  onClick={() => setSourceMode("webcam")}
-                  className="segmented-item"
-                >
-                  <Camera size={14} aria-hidden="true" />
-                  <span>Kamera</span>
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={sourceMode === "phone"}
-                  onClick={() => {
-                    setSourceMode("phone");
-                    if (!pairToken) startPhonePairing();
-                  }}
-                  className="segmented-item"
-                >
-                  <Smartphone size={14} aria-hidden="true" />
-                  <span>Kamera HP</span>
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={sourceMode === "upload"}
-                  onClick={() => {
-                    setSourceMode("upload");
-                    fileInputRef.current?.click();
-                  }}
-                  className="segmented-item"
-                >
-                  <Upload size={14} aria-hidden="true" />
-                  <span>Unggah</span>
-                </button>
+                <Tooltip text="Gunakan webcam laptop / komputer utama" position="top">
+                  <button
+                    type="button"
+                    aria-pressed={sourceMode === "webcam"}
+                    onClick={() => setSourceMode("webcam")}
+                    className="segmented-item w-full"
+                  >
+                    <Camera size={14} aria-hidden="true" />
+                    <span>Kamera</span>
+                  </button>
+                </Tooltip>
+
+                <Tooltip text="Hubungkan kamera HP via QR code untuk memindai dari atas meja" position="top">
+                  <button
+                    type="button"
+                    aria-pressed={sourceMode === "phone"}
+                    onClick={() => {
+                      setSourceMode("phone");
+                      if (!pairToken) startPhonePairing();
+                    }}
+                    className="segmented-item w-full"
+                  >
+                    <Smartphone size={14} aria-hidden="true" />
+                    <span>Kamera HP</span>
+                  </button>
+                </Tooltip>
+
+                <Tooltip text="Unggah foto lembar Braille dari penyimpanan berkas" position="top">
+                  <button
+                    type="button"
+                    aria-pressed={sourceMode === "upload"}
+                    onClick={() => {
+                      setSourceMode("upload");
+                      fileInputRef.current?.click();
+                    }}
+                    className="segmented-item w-full"
+                  >
+                    <Upload size={14} aria-hidden="true" />
+                    <span>Unggah</span>
+                  </button>
+                </Tooltip>
               </div>
             </div>
 

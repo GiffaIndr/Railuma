@@ -3,6 +3,7 @@ import {
   ArrowRight,
   ClipboardCheck,
   Contrast,
+  HelpCircle,
   History,
   Home,
   LogIn,
@@ -22,6 +23,9 @@ import VoiceTranslator from "./components/VoiceTranslator";
 import PhoneCameraClient from "./components/PhoneCameraClient";
 import AuthCard from "./components/AuthCard";
 import LandingView from "./components/LandingView";
+import ErrorBoundary from "./components/ErrorBoundary";
+import { ToastProvider } from "./components/Toast";
+import OnboardingTour from "./components/OnboardingTour";
 import {
   CLAHE_KEY,
   DATASET_CONSENT_KEY,
@@ -35,6 +39,8 @@ import {
   isDatasetConsentOn,
   isSaveImageOn,
   logoutUser,
+  parseOAuthHash,
+  setAuthSession,
 } from "./services/api";
 import { A11yProvider } from "./context/A11yProvider";
 import { useA11y } from "./context/useA11y";
@@ -299,6 +305,7 @@ function Shell() {
   });
 
   const [healthInfo, setHealthInfo] = useState(null);
+  const [showTour, setShowTour] = useState(false);
   const [pairTokenUrl, setPairTokenUrl] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get("pair") || "";
@@ -339,6 +346,30 @@ function Shell() {
       .then((h) => setHealthInfo(h))
       .catch(() => setHealthInfo(null));
 
+    // Periksa kembalian Google OAuth dari URL hash (#access_token=...)
+    const oauth = parseOAuthHash();
+    if (oauth?.access_token) {
+      setAuthSession(oauth.access_token, null);
+      fetchCurrentUser()
+        .then((u) => {
+          if (u) {
+            setCurrentUser(u);
+            setView("studio");
+            setNavId("scan");
+            announce(`Berhasil masuk via Google sebagai ${u.name || u.email}.`);
+          }
+        })
+        .catch((err) => {
+          console.error("Gagal memuat profil OAuth:", err);
+        })
+        .finally(() => {
+          if (typeof window !== "undefined" && window.history?.replaceState) {
+            window.history.replaceState(null, "", window.location.pathname + window.location.search);
+          }
+        });
+      return;
+    }
+
     if (getAuthToken()) {
       fetchCurrentUser()
         .then((u) => {
@@ -355,6 +386,19 @@ function Shell() {
         });
     }
   }, []);
+
+  useEffect(() => {
+    if (currentUser && view === "studio") {
+      try {
+        const completed = localStorage.getItem("railuma_onboarding_completed");
+        if (completed !== "1") {
+          setShowTour(true);
+        }
+      } catch {
+        // abaikan
+      }
+    }
+  }, [currentUser, view]);
 
   useEffect(() => {
     if (!mobileMenuOpen) return undefined;
@@ -529,7 +573,7 @@ function Shell() {
                 <button
                   type="button"
                   onClick={() => setView("studio")}
-                  className="btn btn-primary btn-sm"
+                  className="btn btn-primary btn-sm hidden sm:inline-flex"
                 >
                   <span>Buka Aplikasi</span>
                   <ArrowRight size={15} aria-hidden="true" />
@@ -547,14 +591,94 @@ function Shell() {
                   <button
                     type="button"
                     onClick={() => handleOpenAuth("login")}
-                    className="btn btn-primary btn-sm"
+                    className="btn btn-primary btn-sm hidden sm:inline-flex"
                   >
                     <span>Mulai Pindai</span>
                   </button>
                 </>
               )}
+
+              {/* Tombol Hamburger Khusus Seluler */}
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen((o) => !o)}
+                aria-expanded={mobileMenuOpen}
+                aria-label={mobileMenuOpen ? "Tutup menu navigasi" : "Buka menu navigasi"}
+                className="md:hidden flex items-center justify-center h-9 w-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-sunken)] transition-colors min-h-[44px] min-w-[44px]"
+              >
+                {mobileMenuOpen ? (
+                  <X size={19} aria-hidden="true" />
+                ) : (
+                  <Menu size={19} aria-hidden="true" />
+                )}
+              </button>
             </div>
           </div>
+
+          {/* Laci Navigasi Seluler Halaman Depan */}
+          {mobileMenuOpen && (
+            <div
+              className="md:hidden border-b border-[var(--border-subtle)] bg-[var(--surface)] px-4 py-4 shadow-md animate-in slide-in-from-top-1 duration-150"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Menu navigasi seluler"
+            >
+              <div className="flex flex-col gap-2">
+                <a
+                  href="#cara-kerja"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center justify-between py-2.5 px-3 rounded-xl text-sm font-semibold text-[var(--text)] hover:bg-[var(--surface-sunken)] transition-colors no-underline min-h-[44px]"
+                >
+                  <span>Cara Kerja</span>
+                  <ArrowRight size={15} className="text-muted-theme" aria-hidden="true" />
+                </a>
+
+                <a
+                  href="#fitur-studio"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center justify-between py-2.5 px-3 rounded-xl text-sm font-semibold text-[var(--text)] hover:bg-[var(--surface-sunken)] transition-colors no-underline min-h-[44px]"
+                >
+                  <span>Instrumen & Alat</span>
+                  <ArrowRight size={15} className="text-muted-theme" aria-hidden="true" />
+                </a>
+
+                <div className="h-px bg-[var(--border-subtle)] my-1" />
+
+                {currentUser ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      setView("studio");
+                    }}
+                    className="btn btn-primary w-full !justify-center !min-h-[44px]"
+                  >
+                    <span>Buka Studio Aplikasi</span>
+                    <ArrowRight size={16} aria-hidden="true" />
+                  </button>
+                ) : (
+                  <div className="flex flex-col gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAuth("login")}
+                      className="btn btn-secondary w-full !justify-center !min-h-[44px]"
+                    >
+                      <LogIn size={16} aria-hidden="true" />
+                      <span>Masuk ke Akun</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAuth("register")}
+                      className="btn btn-primary w-full !justify-center !min-h-[44px]"
+                    >
+                      <span>Daftar Akun Baru</span>
+                      <ArrowRight size={16} aria-hidden="true" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </header>
 
         <main id="isi" tabIndex={-1} className="flex flex-1 flex-col">
@@ -731,6 +855,16 @@ function Shell() {
 
             {/* Kontrol Cepat di Sisi Kanan Bilah Atas */}
             <div className="flex items-center gap-2 sm:gap-3">
+              <button
+                type="button"
+                onClick={() => setShowTour(true)}
+                title="Buka panduan pengguna interaktif"
+                className="btn btn-secondary btn-sm !px-2.5 sm:!px-3 text-xs"
+              >
+                <HelpCircle size={15} aria-hidden="true" />
+                <span className="hidden sm:inline">Panduan</span>
+              </button>
+
               {navId !== "scan" && (
                 <button
                   type="button"
@@ -1074,14 +1208,19 @@ function Shell() {
           <span>Lainnya</span>
         </button>
       </nav>
+      <OnboardingTour isOpen={showTour} onClose={() => setShowTour(false)} />
     </div>
   );
 }
 
 export default function App() {
   return (
-    <A11yProvider>
-      <Shell />
-    </A11yProvider>
+    <ErrorBoundary>
+      <ToastProvider>
+        <A11yProvider>
+          <Shell />
+        </A11yProvider>
+      </ToastProvider>
+    </ErrorBoundary>
   );
 }
