@@ -1,12 +1,31 @@
-export const API_URL =
-  import.meta.env.VITE_API_URL ||
-  (import.meta.env.DEV
-    ? (typeof window !== "undefined" &&
-       window.location.hostname !== "localhost" &&
-       window.location.hostname !== "127.0.0.1"
-        ? `http://${window.location.hostname}:8000`
-        : "http://127.0.0.1:8000")
-    : "");
+export const API_URL = (() => {
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    const isLocalhost = host === "localhost" || host === "127.0.0.1";
+    if (!isLocalhost) {
+      // Saat diakses via Vercel / domain publik (misal di HP),
+      // selalu gunakan path relatif ("") agar melalui reverse proxy Vercel ke backend.
+      const envUrl = (import.meta.env.VITE_API_URL || "").trim();
+      if (envUrl && !envUrl.includes("localhost") && !envUrl.includes("127.0.0.1")) {
+        return envUrl.replace(/\/$/, "");
+      }
+      return "";
+    }
+  }
+
+  if (import.meta.env.DEV) {
+    if (typeof window !== "undefined" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+      return `http://${window.location.hostname}:8000`;
+    }
+    return import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+  }
+
+  const envUrl = (import.meta.env.VITE_API_URL || "").trim();
+  if (envUrl.includes("localhost") || envUrl.includes("127.0.0.1")) {
+    return "";
+  }
+  return envUrl.replace(/\/$/, "");
+})();
 
 export const SUPABASE_URL = "https://rkcvkddbccpmhodryspm.supabase.co";
 export const CLAHE_KEY = "railuma-clahe";
