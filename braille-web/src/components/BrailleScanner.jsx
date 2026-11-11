@@ -1750,13 +1750,13 @@ export default function BrailleScanner({
           <div
             className={
               isCameraFullscreen
-                ? "fixed inset-0 z-[99999] h-[100dvh] w-screen bg-black flex flex-col justify-between overflow-hidden p-0 sm:p-4 select-none"
+                ? "camera-fullscreen-viewport"
                 : "camera-viewport relative overflow-hidden"
             }
           >
             {/* Header Kontrol Khusus Layar Penuh */}
             {isCameraFullscreen ? (
-              <div className="relative z-30 flex items-center justify-between w-full px-4 pt-[max(12px,env(safe-area-inset-top))]">
+              <div className="fullscreen-hud-top">
                 <div className="flex items-center gap-2">
                   <span className="flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 text-[0.8rem] font-bold text-[#E6FF2E] backdrop-blur-md border border-white/15">
                     <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-ping" />
@@ -1791,8 +1791,8 @@ export default function BrailleScanner({
             {/* HUD Optical Corners */}
             <div className={`hud-corner hud-corner-tl ${isCameraFullscreen ? "!top-6 !left-6" : ""}`} aria-hidden="true" />
             <div className={`hud-corner hud-corner-tr ${isCameraFullscreen ? "!top-6 !right-6" : ""}`} aria-hidden="true" />
-            <div className={`hud-corner hud-corner-bl ${isCameraFullscreen ? "!bottom-28 !left-6" : ""}`} aria-hidden="true" />
-            <div className={`hud-corner hud-corner-br ${isCameraFullscreen ? "!bottom-28 !right-6" : ""}`} aria-hidden="true" />
+            <div className={`hud-corner hud-corner-bl ${isCameraFullscreen ? "!bottom-36 !left-6" : ""}`} aria-hidden="true" />
+            <div className={`hud-corner hud-corner-br ${isCameraFullscreen ? "!bottom-36 !right-6" : ""}`} aria-hidden="true" />
 
             {sourceMode === "phone" ? (
               <>
@@ -1894,7 +1894,7 @@ export default function BrailleScanner({
 
             {/* Kontrol Bawah Khusus Layar Penuh */}
             {isCameraFullscreen && (
-              <div className="relative z-30 flex flex-col items-center gap-3 w-full px-4 pb-[max(16px,env(safe-area-inset-bottom))]">
+              <div className="fullscreen-hud-bottom">
                 {scanMode === "live" && livePreviewText && (
                   <div
                     aria-hidden="true"

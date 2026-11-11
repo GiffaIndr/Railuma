@@ -186,12 +186,12 @@ export default function PhoneCameraClient({ token, onExit }) {
         <div
           className={
             isFullscreen
-              ? "fixed inset-0 z-[99999] h-[100dvh] w-screen bg-black flex flex-col justify-between overflow-hidden p-0 sm:p-4 select-none"
+              ? "camera-fullscreen-viewport"
               : "camera-viewport relative overflow-hidden"
           }
         >
           {isFullscreen ? (
-            <div className="relative z-30 flex items-center justify-between w-full px-4 pt-[max(12px,env(safe-area-inset-top))]">
+            <div className="fullscreen-hud-top">
               <span className="flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 text-[0.8rem] font-bold text-[#E6FF2E] backdrop-blur-md border border-white/15">
                 <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-ping" />
                 <span>Kamera HP Layar Penuh</span>
@@ -237,7 +237,7 @@ export default function PhoneCameraClient({ token, onExit }) {
           )}
 
           {isFullscreen && isCameraActive && (
-            <div className="relative z-30 flex items-center justify-center w-full px-4 pb-[max(16px,env(safe-area-inset-bottom))]">
+            <div className="fullscreen-hud-bottom">
               <button
                 type="button"
                 onClick={sendCapture}
