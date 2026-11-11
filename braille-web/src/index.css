@@ -1091,8 +1091,8 @@ body.camera-fullscreen-open .page-fade-enter {
   width: 100%;
   padding-left: 16px;
   padding-right: 16px;
-  padding-bottom: max(36px, calc(20px + env(safe-area-inset-bottom, 0px)));
-  margin-bottom: 8px;
+  padding-bottom: max(60px, calc(36px + env(safe-area-inset-bottom, 0px)));
+  margin-bottom: 16px;
 }
 
 /* 2. Micro-interactions Tombol dan Kartu */

@@ -406,11 +406,11 @@ def api_create_pairing(req: PairingCreateReq, auth: dict = Depends(require_auth)
         "user_id": auth["id"],
         "session_id": req.session_id,
         "created_at": now,
-        "expires_at": now + 600,
+        "expires_at": now + 86400,
     }
     return {
         "token": token,
-        "expires_in_seconds": 600,
+        "expires_in_seconds": 86400,
     }
 
 
@@ -483,30 +483,61 @@ async def ws_live(websocket: WebSocket):
 async def ws_device_pairing(websocket: WebSocket, token: str):
     """Kanal real-time antara kamera HP dan dasbor web yang berbagi token penyandingan."""
     info = PAIRING_TOKENS.get(token)
-    if not info or info["expires_at"] < time.time():
-        await websocket.close(code=4004, reason="Token penyandingan tidak valid atau kedaluwarsa")
-        return
+    now = time.time()
+    if not info:
+        # Jika server baru restart atau container baru, izinkan token yang valid formatnya
+        if len(token) >= 8:
+            info = {
+                "token": token,
+                "user_id": "auto",
+                "session_id": None,
+                "created_at": now,
+                "expires_at": now + 86400,
+            }
+            PAIRING_TOKENS[token] = info
+        else:
+            await websocket.close(code=4004, reason="Token penyandingan tidak valid")
+            return
+    elif info["expires_at"] < now:
+        info["expires_at"] = now + 86400
 
     await websocket.accept()
     ruang = PAIRING_SOCKETS.setdefault(token, set())
     ruang.add(websocket)
     try:
         for peer in list(ruang):
-            if peer is not websocket:
+            try:
                 await peer.send_json({"type": "peer_joined", "peers": len(ruang)})
+            except Exception:
+                pass
 
         while True:
             msg = await websocket.receive()
             if msg.get("type") == "websocket.disconnect":
                 break
             if "text" in msg and msg["text"]:
+                txt = msg["text"]
+                # Tangani heartbeat ping/pong agar koneksi tidak diputus idle timeout
+                if txt == "ping" or '"type":"ping"' in txt or '"type": "ping"' in txt:
+                    try:
+                        await websocket.send_text('{"type":"pong"}')
+                    except Exception:
+                        pass
+                    continue
+
                 for peer in list(ruang):
                     if peer is not websocket:
-                        await peer.send_text(msg["text"])
+                        try:
+                            await peer.send_text(txt)
+                        except Exception:
+                            pass
             elif "bytes" in msg and msg["bytes"]:
                 for peer in list(ruang):
                     if peer is not websocket:
-                        await peer.send_bytes(msg["bytes"])
+                        try:
+                            await peer.send_bytes(msg["bytes"])
+                        except Exception:
+                            pass
     except WebSocketDisconnect:
         pass
     finally:

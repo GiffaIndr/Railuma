@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AlertCircle,
   ArrowRight,
   Camera,
   CameraOff,
@@ -8,6 +9,7 @@ import {
   Copy,
   Download,
   FileText,
+  Info,
   Maximize2,
   Minimize2,
   Pin,
@@ -123,6 +125,52 @@ export default function BrailleScanner({
   const [phoneStreamUrl, setPhoneStreamUrl] = useState(null);
   const [, setPhoneCameraActive] = useState(false);
   const pairWsRef = useRef(null);
+  const pairPingRef = useRef(null);
+
+  // Sensory feedback layar penuh (Flash, audio click, getaran, banner responsif)
+  const [shutterFlash, setShutterFlash] = useState(false);
+  const [fullscreenFeedback, setFullscreenFeedback] = useState(null);
+  const feedbackTimerRef = useRef(null);
+
+  const playShutterSound = useCallback(() => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(800, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(150, ctx.currentTime + 0.08);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.08);
+    } catch {
+      // abaikan jika audio otomatis diblokir browser
+    }
+  }, []);
+
+  const triggerShutterSensory = useCallback(() => {
+    setShutterFlash(true);
+    setTimeout(() => setShutterFlash(false), 120);
+    playShutterSound();
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      navigator.vibrate(50);
+    }
+  }, [playShutterSound]);
+
+  useEffect(() => {
+    return () => {
+      clearInterval(pairPingRef.current);
+      clearTimeout(feedbackTimerRef.current);
+      if (pairWsRef.current) {
+        pairWsRef.current.close();
+      }
+    };
+  }, []);
 
   // Mode Layar Penuh (Fullscreen Camera) untuk HP / Desktop
   const [isCameraFullscreen, setIsCameraFullscreen] = useState(false);
@@ -564,6 +612,11 @@ export default function BrailleScanner({
     if (!blob) {
       if (!isCameraActive) {
         setStatus("nocam");
+        setFullscreenFeedback({
+          type: "error",
+          message: "Kamera Belum Aktif",
+          detail: "Nyalakan kamera terlebih dahulu sebelum mengambil foto.",
+        });
         return;
       }
       const s = measureSharpness(videoRef.current);
@@ -571,18 +624,40 @@ export default function BrailleScanner({
       if (s.ready && s.isBlurry) {
         setStatus("blur");
         announce("Gambar buram. Tahan kamera sebentar lalu coba lagi.");
+        setFullscreenFeedback({
+          type: "blur",
+          message: "Gambar Terdeteksi Buram",
+          detail: `Ketajaman: ${s.variance} (minimal ${BLUR_MIN}). Tahan kamera stabil dan coba lagi.`,
+        });
+        if (typeof navigator !== "undefined" && navigator.vibrate) {
+          navigator.vibrate([80, 50, 80]);
+        }
         return;
       }
+      triggerShutterSensory();
       blob = await captureFrame();
+    } else {
+      triggerShutterSensory();
     }
 
     if (!blob) {
       setStatus("error");
       setErrorMessage("Gagal mengambil gambar dari kamera.");
+      setFullscreenFeedback({
+        type: "error",
+        message: "Gagal Mengambil Gambar",
+        detail: "Tidak dapat mengekstrak frame dari sensor kamera.",
+      });
       return;
     }
 
     setStatus("loading");
+    clearTimeout(feedbackTimerRef.current);
+    setFullscreenFeedback({
+      type: "loading",
+      message: "Memproses foto Braille...",
+      detail: "Menganalisis kisi titik dan mencocokkan kata...",
+    });
     announce("Memproses dan menyimpan pindai ke sesi...");
 
     try {
@@ -599,6 +674,14 @@ export default function BrailleScanner({
         setQualityInfo(res.quality || null);
         setStatus("blur");
         announce(res.message || "Gambar buram, pemindaian ditolak.");
+        setFullscreenFeedback({
+          type: "blur",
+          message: "Gambar Terdeteksi Buram",
+          detail: `Ketajaman: ${res.sharpness ?? sharp} (minimal ${BLUR_MIN}). Tahan kamera stabil.`,
+        });
+        if (typeof navigator !== "undefined" && navigator.vibrate) {
+          navigator.vibrate([80, 50, 80]);
+        }
         return;
       }
 
@@ -609,6 +692,14 @@ export default function BrailleScanner({
       if (!item?.final_text?.trim()) {
         setStatus("empty");
         announce("Belum ada Braille terbaca. Coba lebih dekat atau ubah arah cahaya.");
+        setFullscreenFeedback({
+          type: "empty",
+          message: "Belum Ada Titik Braille Terbaca",
+          detail: "Dekatkan kamera ke kertas atau posisikan cahaya dari samping.",
+        });
+        if (typeof navigator !== "undefined" && navigator.vibrate) {
+          navigator.vibrate([80, 50, 80]);
+        }
       } else {
         setStatus("done");
         const hasReview =
@@ -616,6 +707,19 @@ export default function BrailleScanner({
           (item.cells_json || []).some((c) => c.flag === "review" || (c.conf ?? 1) < 0.65);
         setRightTab(scanMode === "sentence" && hasReview ? "alternatif" : "hasil");
         announce(`Tersimpan di sesi: ${item.final_text}`);
+
+        setFullscreenFeedback({
+          type: "done",
+          message: `Berhasil: "${item.final_text}"`,
+          detail: `${item.cells_json?.length || 0} sel terdeteksi · Ketajaman ${item.sharpness ?? sharp}`,
+        });
+        if (typeof navigator !== "undefined" && navigator.vibrate) {
+          navigator.vibrate([40, 60, 40]);
+        }
+        clearTimeout(feedbackTimerRef.current);
+        feedbackTimerRef.current = setTimeout(() => {
+          setFullscreenFeedback(null);
+        }, 5000);
       }
 
       await loadActiveSessionDetail(activeSessionId);
@@ -624,21 +728,46 @@ export default function BrailleScanner({
       console.error(err);
       setStatus("error");
       setErrorMessage(err.message || "Tidak dapat menghubungi server.");
+      setFullscreenFeedback({
+        type: "error",
+        message: "Gagal Memproses Gambar",
+        detail: err.message || "Periksa koneksi internet dan coba lagi.",
+      });
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        navigator.vibrate([90, 60, 90]);
+      }
     }
   };
 
   const executeSentenceBurstScan = async () => {
     if (!isCameraActive) {
       setStatus("nocam");
+      setFullscreenFeedback({
+        type: "error",
+        message: "Kamera Belum Aktif",
+        detail: "Nyalakan kamera terlebih dahulu.",
+      });
       return;
     }
     setStatus("loading");
     setBurstProgress(1);
+    clearTimeout(feedbackTimerRef.current);
+    setFullscreenFeedback({
+      type: "loading",
+      message: "Mengambil Rangkaian Foto (1/3)...",
+      detail: "Tahan kamera tetap stabil dan tidak goyang.",
+    });
     announce("Mengambil 3 frame beruntun untuk kalimat. Tahan kamera tetap stabil.");
 
     const candidates = [];
     for (let i = 0; i < 3; i++) {
       setBurstProgress(i + 1);
+      setFullscreenFeedback({
+        type: "loading",
+        message: `Mengambil Rangkaian Foto (${i + 1}/3)...`,
+        detail: "Tahan kamera tetap stabil dan tidak goyang.",
+      });
+      triggerShutterSensory();
       const s = measureSharpness(videoRef.current);
       const blob = await captureFrame();
       if (blob) {
@@ -651,6 +780,11 @@ export default function BrailleScanner({
     if (candidates.length === 0) {
       setStatus("error");
       setErrorMessage("Gagal menangkap burst frame.");
+      setFullscreenFeedback({
+        type: "error",
+        message: "Gagal Menangkap Frame",
+        detail: "Tidak ada frame yang berhasil diambil dari kamera.",
+      });
       return;
     }
 
@@ -660,9 +794,22 @@ export default function BrailleScanner({
     if (best.variance < BLUR_MIN) {
       setStatus("blur");
       announce("Gambar buram. Tahan kamera sebentar lalu coba lagi.");
+      setFullscreenFeedback({
+        type: "blur",
+        message: "Gambar Terdeteksi Buram",
+        detail: `Ketajaman: ${best.variance} (minimal ${BLUR_MIN}). Tahan kamera stabil.`,
+      });
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        navigator.vibrate([80, 50, 80]);
+      }
       return;
     }
 
+    setFullscreenFeedback({
+      type: "loading",
+      message: "Menganalisis Rangkaian Kalimat...",
+      detail: "Memilih frame tertajam dan menyusun urutan kata...",
+    });
     await executeSingleOrFreezeScan(best.blob, "webcam");
   };
 
@@ -681,10 +828,19 @@ export default function BrailleScanner({
 
       const ws = new WebSocket(`${getWsBaseUrl()}/ws/device/${encodeURIComponent(res.token)}`);
       pairWsRef.current = ws;
+
+      clearInterval(pairPingRef.current);
+      pairPingRef.current = setInterval(() => {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "ping" }));
+        }
+      }, 10000);
+
       ws.onmessage = async (ev) => {
         if (typeof ev.data === "string") {
           try {
             const msg = JSON.parse(ev.data);
+            if (msg.type === "pong") return;
             if (msg.type === "peer_joined" || msg.type === "peer_left") {
               const peers = Math.max(0, (msg.peers || 1) - 1);
               setPairPeers(peers);
@@ -1791,8 +1947,16 @@ export default function BrailleScanner({
             {/* HUD Optical Corners */}
             <div className={`hud-corner hud-corner-tl ${isCameraFullscreen ? "!top-6 !left-6" : ""}`} aria-hidden="true" />
             <div className={`hud-corner hud-corner-tr ${isCameraFullscreen ? "!top-6 !right-6" : ""}`} aria-hidden="true" />
-            <div className={`hud-corner hud-corner-bl ${isCameraFullscreen ? "!bottom-36 !left-6" : ""}`} aria-hidden="true" />
-            <div className={`hud-corner hud-corner-br ${isCameraFullscreen ? "!bottom-36 !right-6" : ""}`} aria-hidden="true" />
+            <div className={`hud-corner hud-corner-bl ${isCameraFullscreen ? "!bottom-44 !left-6" : ""}`} aria-hidden="true" />
+            <div className={`hud-corner hud-corner-br ${isCameraFullscreen ? "!bottom-44 !right-6" : ""}`} aria-hidden="true" />
+
+            {/* Kilat Shutter Kamera */}
+            <div
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-0 z-40 bg-white transition-opacity duration-150 ${
+                shutterFlash ? "opacity-90" : "opacity-0"
+              }`}
+            />
 
             {sourceMode === "phone" ? (
               <>
@@ -1895,6 +2059,65 @@ export default function BrailleScanner({
             {/* Kontrol Bawah Khusus Layar Penuh */}
             {isCameraFullscreen && (
               <div className="fullscreen-hud-bottom">
+                {/* Banner Feedback Layar Penuh (Hasil, Loading, Buram, Error) */}
+                {fullscreenFeedback && (
+                  <div
+                    role="alert"
+                    aria-live="assertive"
+                    className={`w-full max-w-md rounded-2xl px-4 py-3 backdrop-blur-md shadow-2xl border transition-all animate-in slide-in-from-bottom-2 duration-200 ${
+                      fullscreenFeedback.type === "done"
+                        ? "bg-[#064E3B]/95 border-[#34D399] text-white"
+                        : fullscreenFeedback.type === "blur"
+                          ? "bg-[#78350F]/95 border-[#FBBF24] text-white"
+                          : fullscreenFeedback.type === "error"
+                            ? "bg-[#7F1D1D]/95 border-[#F87171] text-white"
+                            : fullscreenFeedback.type === "empty"
+                              ? "bg-[#1E293B]/95 border-[#94A3B8] text-white"
+                              : "bg-[#0F172A]/95 border-white/20 text-white"
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5 flex-none">
+                        {fullscreenFeedback.type === "done" && (
+                          <CheckCircle2 size={20} className="text-[#34D399]" aria-hidden="true" />
+                        )}
+                        {fullscreenFeedback.type === "blur" && (
+                          <TriangleAlert size={20} className="text-[#FBBF24]" aria-hidden="true" />
+                        )}
+                        {fullscreenFeedback.type === "error" && (
+                          <AlertCircle size={20} className="text-[#F87171]" aria-hidden="true" />
+                        )}
+                        {fullscreenFeedback.type === "empty" && (
+                          <Info size={20} className="text-[#94A3B8]" aria-hidden="true" />
+                        )}
+                        {fullscreenFeedback.type === "loading" && (
+                          <RefreshCw size={20} className="text-[#E6FF2E] animate-spin" aria-hidden="true" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="m-0 text-[0.92rem] font-bold leading-snug truncate">
+                          {fullscreenFeedback.message}
+                        </p>
+                        {fullscreenFeedback.detail && (
+                          <p className="m-0 mt-0.5 text-[0.8rem] text-white/80 leading-normal line-clamp-2">
+                            {fullscreenFeedback.detail}
+                          </p>
+                        )}
+                      </div>
+                      {fullscreenFeedback.type !== "loading" && (
+                        <button
+                          type="button"
+                          onClick={() => setFullscreenFeedback(null)}
+                          className="flex-none p-1 text-white/60 hover:text-white"
+                          aria-label="Tutup notifikasi"
+                        >
+                          <X size={16} aria-hidden="true" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {scanMode === "live" && livePreviewText && (
                   <div
                     aria-hidden="true"
@@ -1968,10 +2191,14 @@ export default function BrailleScanner({
                       }
                     }}
                     disabled={status === "loading" || (!isCameraActive && sourceMode !== "phone")}
-                    aria-label="Ambil foto Braille"
+                    aria-label={status === "loading" ? "Sedang memproses foto Braille" : "Ambil foto Braille"}
                     className="flex h-[66px] w-[66px] items-center justify-center rounded-full bg-[#E6FF2E] text-[#0A1628] shadow-[0_0_24px_rgba(230,255,46,0.35)] active:scale-95 transition-all border-4 border-white/40 disabled:opacity-50"
                   >
-                    <Camera size={28} strokeWidth={2.4} aria-hidden="true" />
+                    {status === "loading" ? (
+                      <RefreshCw size={28} className="animate-spin text-[#0A1628]" aria-hidden="true" />
+                    ) : (
+                      <Camera size={28} strokeWidth={2.4} aria-hidden="true" />
+                    )}
                   </button>
                 </div>
               </div>

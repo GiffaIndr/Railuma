@@ -20,8 +20,55 @@ export default function PhoneCameraClient({ token, onExit }) {
   const [sentCount, setSentCount] = useState(0);
   const [statusMsg, setStatusMsg] = useState("Menghubungkan ke dasbor komputer...");
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [shutterFlash, setShutterFlash] = useState(false);
   const wsRef = useRef(null);
   const sendCaptureRef = useRef(null);
+
+  // Mencegah layar HP mati otomatis saat kamera sedang aktif (Wake Lock API)
+  useEffect(() => {
+    let wakeLock = null;
+    const requestWakeLock = async () => {
+      if ("wakeLock" in navigator && isCameraActive) {
+        try {
+          wakeLock = await navigator.wakeLock.request("screen");
+        } catch {
+          // peramban tidak mengizinkan wakelock
+        }
+      }
+    };
+    requestWakeLock();
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      wakeLock?.release().catch(() => {});
+    };
+  }, [isCameraActive]);
+
+  const playShutterSound = () => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(800, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(150, ctx.currentTime + 0.08);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.08);
+    } catch {
+      // abaikan jika audio dibatasi
+    }
+  };
 
   useEffect(() => {
     if (typeof document !== "undefined") {
@@ -61,6 +108,15 @@ export default function PhoneCameraClient({ token, onExit }) {
     }
     const s = measureSharpness(videoRef.current);
     setSharp(s.variance);
+
+    // Efek visual flash, audio, dan getar saat tombol capture ditekan
+    setShutterFlash(true);
+    setTimeout(() => setShutterFlash(false), 120);
+    playShutterSound();
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      navigator.vibrate(50);
+    }
+
     const blob = await captureFrame();
     if (!blob || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       setStatusMsg("Gagal mengirim foto. Pastikan koneksi ke dasbor masih aktif.");
@@ -98,6 +154,8 @@ export default function PhoneCameraClient({ token, onExit }) {
     const interval = setInterval(() => {
       if (busy || !videoRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       if (videoRef.current.readyState < 2) return;
+      // Kendalikan penumpukan frame jika bandwidth seluler terbatas
+      if (wsRef.current.bufferedAmount > 65536) return;
 
       busy = true;
       try {
@@ -126,33 +184,80 @@ export default function PhoneCameraClient({ token, onExit }) {
   }, [isCameraActive, wsState, videoRef]);
 
   useEffect(() => {
-    const ws = new WebSocket(`${getWsBaseUrl()}/ws/device/${encodeURIComponent(token)}`);
-    wsRef.current = ws;
+    let unmounted = false;
+    let ws = null;
+    let pingInterval = null;
+    let reconnectTimeout = null;
 
-    ws.onopen = () => {
-      setWsState("connected");
-      setStatusMsg("Terhubung ke dasbor. Nyalakan kamera belakang lalu tekan Kirim Foto.");
-    };
-    ws.onmessage = async (ev) => {
+    const connect = () => {
+      if (unmounted) return;
+      setWsState("connecting");
+      setStatusMsg("Menghubungkan ke dasbor komputer...");
+
       try {
-        const msg = JSON.parse(ev.data);
-        if (msg.type === "request_capture" && sendCaptureRef.current) {
-          await sendCaptureRef.current();
-        }
+        ws = new WebSocket(`${getWsBaseUrl()}/ws/device/${encodeURIComponent(token)}`);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          if (unmounted) return;
+          setWsState("connected");
+          setStatusMsg("Terhubung ke dasbor. Nyalakan kamera belakang lalu tekan Kirim Foto.");
+
+          // Heartbeat ping berkala agar tidak diputus idle timeout oleh jaringan/hosting
+          clearInterval(pingInterval);
+          pingInterval = setInterval(() => {
+            if (ws?.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "ping" }));
+            }
+          }, 10000);
+        };
+
+        ws.onmessage = async (ev) => {
+          try {
+            if (typeof ev.data === "string") {
+              const msg = JSON.parse(ev.data);
+              if (msg.type === "pong") return;
+              if (msg.type === "request_capture" && sendCaptureRef.current) {
+                await sendCaptureRef.current();
+              }
+            }
+          } catch {
+            // lewati pesan biner
+          }
+        };
+
+        ws.onerror = () => {
+          if (unmounted) return;
+          setWsState("error");
+          setStatusMsg("Koneksi terganggu. Mencoba menyambung kembali...");
+        };
+
+        ws.onclose = () => {
+          clearInterval(pingInterval);
+          if (unmounted) return;
+          setWsState("closed");
+          setStatusMsg("Koneksi terputus. Menyambung ulang dalam 2 detik...");
+          clearTimeout(reconnectTimeout);
+          reconnectTimeout = setTimeout(connect, 2000);
+        };
       } catch {
-        // lewati pesan biner
+        if (!unmounted) {
+          setWsState("error");
+          clearTimeout(reconnectTimeout);
+          reconnectTimeout = setTimeout(connect, 3000);
+        }
       }
     };
-    ws.onerror = () => {
-      setWsState("error");
-      setStatusMsg("Koneksi ke server terputus atau token kedaluwarsa.");
-    };
-    ws.onclose = () => {
-      setWsState("closed");
-    };
+
+    connect();
 
     return () => {
-      ws.close();
+      unmounted = true;
+      clearInterval(pingInterval);
+      clearTimeout(reconnectTimeout);
+      if (ws) {
+        ws.close();
+      }
     };
   }, [token]);
 
@@ -215,6 +320,14 @@ export default function PhoneCameraClient({ token, onExit }) {
               <Maximize2 size={18} aria-hidden="true" />
             </button>
           )}
+
+          {/* Efek Kilat Shutter Kamera */}
+          <div
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-0 z-40 bg-white transition-opacity duration-150 ${
+              shutterFlash ? "opacity-90" : "opacity-0"
+            }`}
+          />
 
           <video
             ref={videoRef}

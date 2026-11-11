@@ -34,8 +34,17 @@ export const DATASET_CONSENT_KEY = "railuma-dataset-consent";
 export const AUTH_TOKEN_KEY = "railuma-auth-token";
 export const AUTH_USER_KEY = "railuma-auth-user";
 
-export const signInWithGoogle = () => {
+export const signInWithGoogle = async () => {
   if (typeof window === "undefined") return;
+  try {
+    const p = await fetchAuthProviders();
+    if (!p?.google) {
+      alert("Masuk dengan Google belum diaktifkan di dasbor Supabase proyek ini. Silakan gunakan email dan kata sandi.");
+      return;
+    }
+  } catch {
+    // abaikan jika jaringan lambat
+  }
   const redirectUrl = `${window.location.origin}${window.location.pathname}`;
   window.location.href = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectUrl)}`;
 };
