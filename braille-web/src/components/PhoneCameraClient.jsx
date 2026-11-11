@@ -23,6 +23,21 @@ export default function PhoneCameraClient({ token, onExit }) {
   const wsRef = useRef(null);
   const sendCaptureRef = useRef(null);
 
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      if (isFullscreen) {
+        document.body.classList.add("camera-fullscreen-open");
+      } else {
+        document.body.classList.remove("camera-fullscreen-open");
+      }
+    }
+    return () => {
+      if (typeof document !== "undefined") {
+        document.body.classList.remove("camera-fullscreen-open");
+      }
+    };
+  }, [isFullscreen]);
+
   const toggleFullscreen = () => {
     setIsFullscreen((prev) => {
       const next = !prev;
@@ -171,12 +186,12 @@ export default function PhoneCameraClient({ token, onExit }) {
         <div
           className={
             isFullscreen
-              ? "fixed inset-0 z-[100] h-[100dvh] w-screen bg-[#040B17] flex flex-col justify-between overflow-hidden p-3 sm:p-5 select-none"
+              ? "fixed inset-0 z-[99999] h-[100dvh] w-screen bg-black flex flex-col justify-between overflow-hidden p-0 sm:p-4 select-none"
               : "camera-viewport relative overflow-hidden"
           }
         >
           {isFullscreen ? (
-            <div className="relative z-30 flex items-center justify-between w-full">
+            <div className="relative z-30 flex items-center justify-between w-full px-4 pt-[max(12px,env(safe-area-inset-top))]">
               <span className="flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 text-[0.8rem] font-bold text-[#E6FF2E] backdrop-blur-md border border-white/15">
                 <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-ping" />
                 <span>Kamera HP Layar Penuh</span>
@@ -211,7 +226,7 @@ export default function PhoneCameraClient({ token, onExit }) {
             aria-label="Pratinjau kamera HP"
             className={
               isFullscreen
-                ? `absolute inset-0 h-full w-full object-contain pointer-events-none ${isCameraActive ? "block" : "hidden"}`
+                ? `absolute inset-0 h-full w-full object-cover sm:object-contain pointer-events-none ${isCameraActive ? "block" : "hidden"}`
                 : `h-full w-full object-contain ${isCameraActive ? "block" : "hidden"}`
             }
           />
@@ -222,7 +237,7 @@ export default function PhoneCameraClient({ token, onExit }) {
           )}
 
           {isFullscreen && isCameraActive && (
-            <div className="relative z-30 flex items-center justify-center w-full pb-4">
+            <div className="relative z-30 flex items-center justify-center w-full px-4 pb-[max(16px,env(safe-area-inset-bottom))]">
               <button
                 type="button"
                 onClick={sendCapture}

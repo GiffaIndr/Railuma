@@ -718,6 +718,7 @@ function Shell() {
   // ============================================================================
   const isScannerSubView =
     navId === "beranda" || navId === "scan" || navId === "sesi";
+  const [isCameraFullscreen, setIsCameraFullscreen] = useState(false);
   const firstName = (currentUser.name || currentUser.email || "Pengguna").split(
     " ",
   )[0];
@@ -803,123 +804,129 @@ function Shell() {
       )}
 
       {/* 3. AREA KERJA UTAMA & BREADCRUMB */}
-      <div className="flex-1 flex flex-col min-w-0 pb-32 sm:pb-24 lg:pb-10">
+      <div className={`flex-1 flex flex-col min-w-0 ${isCameraFullscreen ? "pb-0" : "pb-32 sm:pb-24 lg:pb-10"}`}>
         {/* BILAH ATAS KERJA: BREADCRUMB FUNGSIONAL & DAPAT DIKLIK */}
-        <header className="workspace-topbar">
-          <div className="w-full max-w-[1440px] mx-auto flex items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-              {/* Tombol hamburger menu HANYA untuk seluler */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMobileMenuOpen(true);
-                }}
-                className="lg:hidden flex items-center justify-center h-9 w-9 flex-none rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-sunken)] transition-colors"
-                aria-label="Buka menu navigasi instrumen"
-              >
-                <Menu size={18} aria-hidden="true" />
-              </button>
-
-              {/* BREADCRUMB FUNGSIONAL & JELAS (Bebas Baris Turun di Seluler) */}
-              <nav
-                aria-label="Navigasi remah roti"
-                className="flex items-center gap-1 sm:gap-2 text-[0.86rem] sm:text-[0.88rem] min-w-0"
-              >
+        {!isCameraFullscreen && (
+          <header className="workspace-topbar">
+            <div className="w-full max-w-[1440px] mx-auto flex items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
+              <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                {/* Tombol hamburger menu HANYA untuk seluler */}
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setMobileMenuOpen(false);
-                    handleSelectNav("beranda");
+                    setMobileMenuOpen(true);
                   }}
-                  className="hidden sm:inline-block font-medium text-muted-theme hover:text-[var(--text)] transition-colors border-0 bg-transparent px-1.5 py-1 rounded-md hover:bg-[var(--surface-sunken)] cursor-pointer whitespace-nowrap"
-                  title="Kembali ke Beranda Ruang Kerja"
+                  className="lg:hidden flex items-center justify-center h-9 w-9 flex-none rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-sunken)] transition-colors"
+                  aria-label="Buka menu navigasi instrumen"
                 >
-                  Ruang Kerja
+                  <Menu size={18} aria-hidden="true" />
                 </button>
-                <span
-                  className="hidden sm:inline text-muted-theme/40 text-[0.75rem]"
-                  aria-hidden="true"
-                >
-                  /
-                </span>
-                <span
-                  className="font-bold text-[var(--text)] px-1 py-1 truncate whitespace-nowrap"
-                  aria-current="page"
-                >
-                  {currentNavItem.label}
-                </span>
-              </nav>
-            </div>
 
-            {/* Kontrol Cepat di Sisi Kanan Bilah Atas */}
-            <div className="flex items-center gap-2 sm:gap-3">
-              <button
-                type="button"
-                onClick={() => setShowTour(true)}
-                title="Buka panduan pengguna interaktif"
-                className="btn btn-secondary btn-sm !px-2.5 sm:!px-3 text-xs"
-              >
-                <HelpCircle size={15} aria-hidden="true" />
-                <span className="hidden sm:inline">Panduan</span>
-              </button>
+                {/* BREADCRUMB FUNGSIONAL & JELAS (Bebas Baris Turun di Seluler) */}
+                <nav
+                  aria-label="Navigasi remah roti"
+                  className="flex items-center gap-1 sm:gap-2 text-[0.86rem] sm:text-[0.88rem] min-w-0"
+                >
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMobileMenuOpen(false);
+                      handleSelectNav("beranda");
+                    }}
+                    className="hidden sm:inline-block font-medium text-muted-theme hover:text-[var(--text)] transition-colors border-0 bg-transparent px-1.5 py-1 rounded-md hover:bg-[var(--surface-sunken)] cursor-pointer whitespace-nowrap"
+                    title="Kembali ke Beranda Ruang Kerja"
+                  >
+                    Ruang Kerja
+                  </button>
+                  <span
+                    className="hidden sm:inline text-muted-theme/40 text-[0.75rem]"
+                    aria-hidden="true"
+                  >
+                    /
+                  </span>
+                  <span
+                    className="font-bold text-[var(--text)] px-1 py-1 truncate whitespace-nowrap"
+                    aria-current="page"
+                  >
+                    {currentNavItem.label}
+                  </span>
+                </nav>
+              </div>
 
-              {navId !== "scan" && (
+              {/* Kontrol Cepat di Sisi Kanan Bilah Atas */}
+              <div className="flex items-center gap-2 sm:gap-3">
                 <button
                   type="button"
-                  onClick={() => handleSelectNav("scan")}
-                  className="btn btn-primary btn-sm hidden sm:inline-flex"
+                  onClick={() => setShowTour(true)}
+                  title="Buka panduan pengguna interaktif"
+                  className="btn btn-secondary btn-sm !px-2.5 sm:!px-3 text-xs"
                 >
-                  <ScanLine size={15} aria-hidden="true" />
-                  <span>Ruang Scan</span>
+                  <HelpCircle size={15} aria-hidden="true" />
+                  <span className="hidden sm:inline">Panduan</span>
                 </button>
-              )}
 
-              <button
-                type="button"
-                onClick={() => {
-                  setDarkMode((d) => {
-                    const next = !d;
-                    announce(
-                      next
-                        ? "Tema malam diaktifkan."
-                        : "Tema siang diaktifkan.",
-                    );
-                    return next;
-                  });
-                }}
-                aria-pressed={darkMode}
-                aria-label={
-                  darkMode ? "Ganti ke tema siang" : "Ganti ke tema malam"
-                }
-                title={darkMode ? "Tema Siang" : "Tema Malam"}
-                className="lg:hidden flex items-center justify-center h-9 w-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-sunken)] transition-colors"
-              >
-                {darkMode ? (
-                  <Sun size={16} aria-hidden="true" />
-                ) : (
-                  <Moon size={16} aria-hidden="true" />
+                {navId !== "scan" && (
+                  <button
+                    type="button"
+                    onClick={() => handleSelectNav("scan")}
+                    className="btn btn-primary btn-sm hidden sm:inline-flex"
+                  >
+                    <ScanLine size={15} aria-hidden="true" />
+                    <span>Ruang Scan</span>
+                  </button>
                 )}
-              </button>
 
-              <div className="flex items-center gap-2 pl-2 border-l border-[var(--border-subtle)]">
-                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--on-primary)] text-[0.74rem] font-bold">
-                  {initials}
-                </span>
-                <span className="hidden xl:inline text-[0.82rem] font-semibold text-[var(--text)] max-w-[120px] truncate">
-                  {firstName}
-                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDarkMode((d) => {
+                      const next = !d;
+                      announce(
+                        next
+                          ? "Tema malam diaktifkan."
+                          : "Tema siang diaktifkan.",
+                      );
+                      return next;
+                    });
+                  }}
+                  aria-pressed={darkMode}
+                  aria-label={
+                    darkMode ? "Ganti ke tema siang" : "Ganti ke tema malam"
+                  }
+                  title={darkMode ? "Tema Siang" : "Tema Malam"}
+                  className="lg:hidden flex items-center justify-center h-9 w-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-sunken)] transition-colors"
+                >
+                  {darkMode ? (
+                    <Sun size={16} aria-hidden="true" />
+                  ) : (
+                    <Moon size={16} aria-hidden="true" />
+                  )}
+                </button>
+
+                <div className="flex items-center gap-2 pl-2 border-l border-[var(--border-subtle)]">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--primary)] text-[var(--on-primary)] text-[0.74rem] font-bold">
+                    {initials}
+                  </span>
+                  <span className="hidden xl:inline text-[0.82rem] font-semibold text-[var(--text)] max-w-[120px] truncate">
+                    {firstName}
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
-        </header>
+          </header>
+        )}
 
         {/* KONTEN UTAMA DENGAN TRANSISI HALUS */}
         <main
           id="isi"
           tabIndex={-1}
-          className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto"
+          className={`flex-1 ${
+            isCameraFullscreen
+              ? "p-0 m-0 max-w-none w-full"
+              : "p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto"
+          }`}
         >
           <div key={navId} className="page-fade-enter">
             {/* Judul halaman */}
@@ -985,6 +992,7 @@ function Shell() {
                 subView={navId}
                 onChangeSubView={(next) => setNavId(next)}
                 healthInfo={healthInfo}
+                onFullscreenChange={setIsCameraFullscreen}
                 onAuthExpired={() => {
                   clearAuthSession();
                   setCurrentUser(null);
@@ -1167,47 +1175,49 @@ function Shell() {
       </div>
 
       {/* Bilah Tab Bawah untuk HP */}
-      <nav
-        aria-label="Navigasi bawah perangkat seluler"
-        className="mobile-bottom-bar"
-      >
-        <button
-          type="button"
-          aria-current={navId === "beranda" ? "page" : undefined}
-          onClick={() => handleSelectNav("beranda")}
-          className="mobile-tab-btn"
+      {!isCameraFullscreen && (
+        <nav
+          aria-label="Navigasi bawah perangkat seluler"
+          className="mobile-bottom-bar"
         >
-          <Home size={19} aria-hidden="true" />
-          <span>Beranda</span>
-        </button>
-        <button
-          type="button"
-          aria-current={navId === "scan" ? "page" : undefined}
-          onClick={() => handleSelectNav("scan")}
-          className="mobile-tab-btn"
-        >
-          <ScanLine size={19} aria-hidden="true" />
-          <span>Scan</span>
-        </button>
-        <button
-          type="button"
-          aria-current={navId === "sesi" ? "page" : undefined}
-          onClick={() => handleSelectNav("sesi")}
-          className="mobile-tab-btn"
-        >
-          <History size={19} aria-hidden="true" />
-          <span>Sesi</span>
-        </button>
-        <button
-          type="button"
-          aria-expanded={mobileMenuOpen}
-          onClick={() => setMobileMenuOpen((v) => !v)}
-          className="mobile-tab-btn"
-        >
-          <Menu size={19} aria-hidden="true" />
-          <span>Lainnya</span>
-        </button>
-      </nav>
+          <button
+            type="button"
+            aria-current={navId === "beranda" ? "page" : undefined}
+            onClick={() => handleSelectNav("beranda")}
+            className="mobile-tab-btn"
+          >
+            <Home size={19} aria-hidden="true" />
+            <span>Beranda</span>
+          </button>
+          <button
+            type="button"
+            aria-current={navId === "scan" ? "page" : undefined}
+            onClick={() => handleSelectNav("scan")}
+            className="mobile-tab-btn"
+          >
+            <ScanLine size={19} aria-hidden="true" />
+            <span>Scan</span>
+          </button>
+          <button
+            type="button"
+            aria-current={navId === "sesi" ? "page" : undefined}
+            onClick={() => handleSelectNav("sesi")}
+            className="mobile-tab-btn"
+          >
+            <History size={19} aria-hidden="true" />
+            <span>Sesi</span>
+          </button>
+          <button
+            type="button"
+            aria-expanded={mobileMenuOpen}
+            onClick={() => setMobileMenuOpen((v) => !v)}
+            className="mobile-tab-btn"
+          >
+            <Menu size={19} aria-hidden="true" />
+            <span>Lainnya</span>
+          </button>
+        </nav>
+      )}
       <OnboardingTour isOpen={showTour} onClose={() => setShowTour(false)} />
     </div>
   );

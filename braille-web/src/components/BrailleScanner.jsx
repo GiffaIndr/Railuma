@@ -67,6 +67,7 @@ export default function BrailleScanner({
   subView = "scan",
   onChangeSubView,
   healthInfo,
+  onFullscreenChange,
 }) {
   const {
     videoRef,
@@ -164,6 +165,27 @@ export default function BrailleScanner({
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [isCameraFullscreen]);
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      if (isCameraFullscreen) {
+        document.body.classList.add("camera-fullscreen-open");
+      } else {
+        document.body.classList.remove("camera-fullscreen-open");
+      }
+    }
+    if (onFullscreenChange) {
+      onFullscreenChange(isCameraFullscreen);
+    }
+    return () => {
+      if (typeof document !== "undefined") {
+        document.body.classList.remove("camera-fullscreen-open");
+      }
+      if (onFullscreenChange) {
+        onFullscreenChange(false);
+      }
+    };
+  }, [isCameraFullscreen, onFullscreenChange]);
 
   // Panel Inspektor Sel & Revisi
   const [selectedItem, setSelectedItem] = useState(null);
@@ -1728,13 +1750,13 @@ export default function BrailleScanner({
           <div
             className={
               isCameraFullscreen
-                ? "fixed inset-0 z-[100] h-[100dvh] w-screen bg-[#040B17] flex flex-col justify-between overflow-hidden p-3 sm:p-5 select-none"
+                ? "fixed inset-0 z-[99999] h-[100dvh] w-screen bg-black flex flex-col justify-between overflow-hidden p-0 sm:p-4 select-none"
                 : "camera-viewport relative overflow-hidden"
             }
           >
             {/* Header Kontrol Khusus Layar Penuh */}
             {isCameraFullscreen ? (
-              <div className="relative z-30 flex items-center justify-between w-full px-1">
+              <div className="relative z-30 flex items-center justify-between w-full px-4 pt-[max(12px,env(safe-area-inset-top))]">
                 <div className="flex items-center gap-2">
                   <span className="flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 text-[0.8rem] font-bold text-[#E6FF2E] backdrop-blur-md border border-white/15">
                     <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-ping" />
@@ -1767,10 +1789,10 @@ export default function BrailleScanner({
             )}
 
             {/* HUD Optical Corners */}
-            <div className="hud-corner hud-corner-tl" aria-hidden="true" />
-            <div className="hud-corner hud-corner-tr" aria-hidden="true" />
-            <div className="hud-corner hud-corner-bl" aria-hidden="true" />
-            <div className="hud-corner hud-corner-br" aria-hidden="true" />
+            <div className={`hud-corner hud-corner-tl ${isCameraFullscreen ? "!top-6 !left-6" : ""}`} aria-hidden="true" />
+            <div className={`hud-corner hud-corner-tr ${isCameraFullscreen ? "!top-6 !right-6" : ""}`} aria-hidden="true" />
+            <div className={`hud-corner hud-corner-bl ${isCameraFullscreen ? "!bottom-28 !left-6" : ""}`} aria-hidden="true" />
+            <div className={`hud-corner hud-corner-br ${isCameraFullscreen ? "!bottom-28 !right-6" : ""}`} aria-hidden="true" />
 
             {sourceMode === "phone" ? (
               <>
@@ -1779,7 +1801,11 @@ export default function BrailleScanner({
                     <img
                       src={phoneStreamUrl}
                       alt="Pratinjau langsung kamera HP"
-                      className="h-full w-full object-contain"
+                      className={
+                        isCameraFullscreen
+                          ? "absolute inset-0 h-full w-full object-cover sm:object-contain"
+                          : "h-full w-full object-contain"
+                      }
                     />
                     <div
                       aria-hidden="true"
@@ -1822,7 +1848,7 @@ export default function BrailleScanner({
                   aria-label="Pratinjau kamera dengan overlay poligon Braille"
                   className={
                     isCameraFullscreen
-                      ? `absolute inset-0 h-full w-full object-contain pointer-events-none ${isCameraActive ? "block" : "hidden"}`
+                      ? `absolute inset-0 h-full w-full object-cover sm:object-contain pointer-events-none ${isCameraActive ? "block" : "hidden"}`
                       : `h-full w-full object-contain ${isCameraActive ? "block" : "hidden"}`
                   }
                 />
@@ -1868,7 +1894,7 @@ export default function BrailleScanner({
 
             {/* Kontrol Bawah Khusus Layar Penuh */}
             {isCameraFullscreen && (
-              <div className="relative z-30 flex flex-col items-center gap-3 w-full pb-2">
+              <div className="relative z-30 flex flex-col items-center gap-3 w-full px-4 pb-[max(16px,env(safe-area-inset-bottom))]">
                 {scanMode === "live" && livePreviewText && (
                   <div
                     aria-hidden="true"
