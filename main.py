@@ -249,6 +249,12 @@ def api_auth_login(req: AuthLoginReq):
         raise HTTPException(status_code=401, detail=str(e)) from e
 
 
+@app.get("/api/v1/auth/providers")
+def api_auth_providers():
+    ext = STORE.external_providers()
+    return {"google": bool(ext.get("google"))}
+
+
 @app.get("/api/v1/auth/me")
 def api_auth_me(auth: dict = Depends(require_auth)):
     return {"user": {"id": auth["id"], "email": auth["email"], "name": auth["name"]}}

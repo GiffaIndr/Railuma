@@ -101,6 +101,7 @@ html.high-contrast {
   --text-muted: var(--text);
 }
 
+@layer components {
 *,
 *::before,
 *::after {
@@ -840,6 +841,7 @@ html.dark .mobile-tab-btn[aria-current="page"] {
   min-height: 38px;
   padding: 6px 13px;
   font-size: 0.83rem;
+  white-space: nowrap;
 }
 
 /* Segmented Control Solid */
@@ -865,6 +867,7 @@ html.dark .mobile-tab-btn[aria-current="page"] {
   color: var(--text-muted);
   font-size: 0.83rem;
   font-weight: 600;
+  white-space: nowrap;
   transition: background-color 150ms var(--ease), color 150ms var(--ease);
 }
 
@@ -1242,4 +1245,5 @@ html.dark .card-interactive:hover {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
 }

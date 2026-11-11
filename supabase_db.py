@@ -176,11 +176,12 @@ class RailumaStore:
                 )
                 if r.ok:
                     u = r.json()
+                    meta = u.get("user_metadata") or {}
                     email = u.get("email", "")
                     return {
                         "id": u.get("id"),
                         "email": email,
-                        "name": (u.get("user_metadata") or {}).get("name") or email.split("@")[0],
+                        "name": meta.get("name") or meta.get("full_name") or email.split("@")[0],
                     }
                 return None
             except Exception:  # noqa: BLE001
@@ -188,6 +189,22 @@ class RailumaStore:
 
         db = _baca_lokal()
         return db.get("tokens", {}).get(access_token)
+
+    def external_providers(self) -> dict:
+        """Daftar penyedia OAuth yang aktif di proyek Supabase (mis. google)."""
+        if SUPABASE_OFFLINE:
+            return {}
+        try:
+            r = requests.get(
+                f"{SUPABASE_URL}/auth/v1/settings",
+                headers={"apikey": SUPABASE_KEY},
+                timeout=5.0,
+            )
+            if r.ok:
+                return r.json().get("external") or {}
+        except Exception:  # noqa: BLE001
+            pass
+        return {}
 
     def logout_user(self, access_token: str | None) -> None:
         if not access_token:

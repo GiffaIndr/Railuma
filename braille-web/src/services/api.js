@@ -21,6 +21,16 @@ export const signInWithGoogle = () => {
   window.location.href = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectUrl)}`;
 };
 
+export const fetchAuthProviders = async () => {
+  try {
+    const res = await fetch(`${API_URL}/api/v1/auth/providers`);
+    if (!res.ok) return { google: false };
+    return await res.json();
+  } catch {
+    return { google: false };
+  }
+};
+
 export const parseOAuthHash = () => {
   if (typeof window === "undefined") return null;
   const hash = window.location.hash.startsWith("#")

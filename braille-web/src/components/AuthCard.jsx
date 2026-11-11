@@ -1,6 +1,6 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { ArrowLeft, ArrowRight, CheckCircle2, LogIn, UserPlus, AlertCircle } from "lucide-react";
-import { loginUser, registerUser, signInWithGoogle } from "../services/api";
+import { fetchAuthProviders, loginUser, registerUser, signInWithGoogle } from "../services/api";
 import { useA11y } from "../context/useA11y";
 
 export default function AuthCard({
@@ -16,6 +16,17 @@ export default function AuthCard({
   const [touched, setTouched] = useState({ name: false, email: false, password: false });
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    fetchAuthProviders().then((p) => {
+      if (active) setGoogleEnabled(Boolean(p?.google));
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const emailIsValid = useMemo(() => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
@@ -190,7 +201,8 @@ export default function AuthCard({
             </div>
           </div>
 
-          {/* Opsi Sign in with Google (OAuth 2.0) */}
+          {/* Opsi Sign in with Google: tampil hanya bila penyedia aktif di Supabase */}
+          {googleEnabled && (
           <div className="flex flex-col gap-3">
             <button
               type="button"
@@ -214,6 +226,7 @@ export default function AuthCard({
               <div className="flex-1 h-px bg-[var(--border-subtle)]" />
             </div>
           </div>
+          )}
 
           {errorMsg && (
             <div role="alert" className="alert-box text-[0.9rem]">
