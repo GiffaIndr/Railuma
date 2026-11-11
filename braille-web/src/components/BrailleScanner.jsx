@@ -8,10 +8,14 @@ import {
   Copy,
   Download,
   FileText,
+  Maximize2,
+  Minimize2,
   Pin,
   Plus,
+  RefreshCw,
   Search,
   Smartphone,
+  Sparkles,
   Trash2,
   TriangleAlert,
   Upload,
@@ -118,6 +122,48 @@ export default function BrailleScanner({
   const [phoneStreamUrl, setPhoneStreamUrl] = useState(null);
   const [, setPhoneCameraActive] = useState(false);
   const pairWsRef = useRef(null);
+
+  // Mode Layar Penuh (Fullscreen Camera) untuk HP / Desktop
+  const [isCameraFullscreen, setIsCameraFullscreen] = useState(false);
+
+  const toggleCameraFullscreen = useCallback(() => {
+    setIsCameraFullscreen((prev) => {
+      const next = !prev;
+      if (next) {
+        if (!isCameraActive && sourceMode !== "phone") {
+          startCamera();
+        }
+        try {
+          if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(() => {});
+          }
+        } catch {
+          // abaikan
+        }
+        announce("Kamera layar penuh aktif.");
+      } else {
+        try {
+          if (document.exitFullscreen && document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+          }
+        } catch {
+          // abaikan
+        }
+        announce("Keluar dari kamera layar penuh.");
+      }
+      return next;
+    });
+  }, [isCameraActive, sourceMode, startCamera, announce]);
+
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.key === "Escape" && isCameraFullscreen) {
+        setIsCameraFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [isCameraFullscreen]);
 
   // Panel Inspektor Sel & Revisi
   const [selectedItem, setSelectedItem] = useState(null);
@@ -1504,7 +1550,7 @@ export default function BrailleScanner({
                 Mode:
               </span>
               <div
-                className="segmented-bar flex-1 sm:flex-none"
+                className="segmented-bar flex-1 sm:flex-none flex flex-nowrap overflow-x-auto no-scrollbar max-w-full"
                 role="group"
                 aria-label="Pilih mode pemindaian"
               >
@@ -1543,7 +1589,7 @@ export default function BrailleScanner({
                 Sumber:
               </span>
               <div
-                className="segmented-bar flex-1 sm:flex-none grid grid-cols-3 sm:flex"
+                className="segmented-bar flex-1 sm:flex-none flex flex-nowrap overflow-x-auto no-scrollbar max-w-full"
                 role="group"
                 aria-label="Pilih sumber kamera"
               >
@@ -1679,7 +1725,47 @@ export default function BrailleScanner({
           )}
 
           {/* Viewfinder Kamera Halus dengan HUD Sudut & Laser Scan */}
-          <div className="camera-viewport relative overflow-hidden">
+          <div
+            className={
+              isCameraFullscreen
+                ? "fixed inset-0 z-[100] h-[100dvh] w-screen bg-[#040B17] flex flex-col justify-between overflow-hidden p-3 sm:p-5 select-none"
+                : "camera-viewport relative overflow-hidden"
+            }
+          >
+            {/* Header Kontrol Khusus Layar Penuh */}
+            {isCameraFullscreen ? (
+              <div className="relative z-30 flex items-center justify-between w-full px-1">
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 text-[0.8rem] font-bold text-[#E6FF2E] backdrop-blur-md border border-white/15">
+                    <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-ping" />
+                    <span>Kamera Layar Penuh</span>
+                  </span>
+                  <span className="hidden sm:inline-flex rounded-full bg-black/60 px-2.5 py-1 text-[0.76rem] font-semibold text-white/80 backdrop-blur-md border border-white/10">
+                    Mode: {scanMode === "sentence" ? "Kalimat" : scanMode === "photo" ? "Foto Presisi" : "Live"}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={toggleCameraFullscreen}
+                  className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/75 text-white hover:bg-black/90 hover:text-[#E6FF2E] backdrop-blur-md border border-white/20 text-[0.82rem] font-bold transition-colors min-h-[40px]"
+                >
+                  <Minimize2 size={16} aria-hidden="true" />
+                  <span>Keluar</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={toggleCameraFullscreen}
+                aria-label="Layar penuh kamera"
+                title="Buka kamera layar penuh"
+                className="absolute top-3 right-3 z-20 flex h-9 w-9 items-center justify-center rounded-lg bg-black/60 text-white hover:bg-black/80 hover:text-[#E6FF2E] backdrop-blur-sm border border-white/15 transition-all shadow-sm"
+              >
+                <Maximize2 size={18} aria-hidden="true" />
+              </button>
+            )}
+
             {/* HUD Optical Corners */}
             <div className="hud-corner hud-corner-tl" aria-hidden="true" />
             <div className="hud-corner hud-corner-tr" aria-hidden="true" />
@@ -1705,19 +1791,19 @@ export default function BrailleScanner({
                     <div className="scanner-sweep-line" aria-hidden="true" />
                   </>
                 ) : (
-                  <div className="flex flex-col items-center gap-3 px-6 text-center">
-                    <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-white">
-                      <Smartphone size={24} aria-hidden="true" />
+                  <div className="flex flex-col items-center gap-2.5 px-4 py-6 text-center z-10">
+                    <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white">
+                      <Smartphone size={22} aria-hidden="true" />
                     </span>
-                    <span className="text-[1.05rem] font-bold text-white">
+                    <span className="text-[1.02rem] font-bold text-white">
                       {pairPeers > 0
-                        ? "HP Terhubung · Nyalakan Kamera di HP"
+                        ? "HP Terhubung · Siap Pindai"
                         : "Kamera HP Belum Terhubung"}
                     </span>
-                    <span className="max-w-[42ch] text-[0.86rem] leading-relaxed text-white/75">
+                    <span className="max-w-[36ch] text-[0.82rem] leading-relaxed text-white/75">
                       {pairPeers > 0
-                        ? "Buka kamera di layar HP Anda untuk memunculkan pratinjau live di sini secara langsung."
-                        : "Buka tautan penyandingan di peramban HP Anda. Pratinjau langsung dan hasil foto akan tampil seketika di layar ini."}
+                        ? "Buka kamera di layar HP Anda untuk memunculkan pratinjau live di sini."
+                        : "Buka tautan penyandingan di peramban HP Anda untuk menampilkan pratinjau langsung."}
                     </span>
                   </div>
                 )}
@@ -1734,7 +1820,11 @@ export default function BrailleScanner({
                   width={1280}
                   height={720}
                   aria-label="Pratinjau kamera dengan overlay poligon Braille"
-                  className={`h-full w-full object-contain ${isCameraActive ? "block" : "hidden"}`}
+                  className={
+                    isCameraFullscreen
+                      ? `absolute inset-0 h-full w-full object-contain pointer-events-none ${isCameraActive ? "block" : "hidden"}`
+                      : `h-full w-full object-contain ${isCameraActive ? "block" : "hidden"}`
+                  }
                 />
                 <canvas
                   ref={overlayCanvasRef}
@@ -1749,19 +1839,18 @@ export default function BrailleScanner({
                 )}
 
                 {!isCameraActive && (
-                  <div className="flex flex-col items-center gap-3 px-6 text-center">
-                    <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-white">
-                      <CameraOff size={24} aria-hidden="true" />
+                  <div className="flex flex-col items-center gap-2.5 px-4 py-6 text-center z-10">
+                    <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white">
+                      <CameraOff size={22} aria-hidden="true" />
                     </span>
-                    <span className="text-[1.05rem] font-bold text-white">Kamera belum dinyalakan</span>
-                    <span className="max-w-[42ch] text-[0.86rem] leading-relaxed text-white/75">
-                      Cahaya dari arah samping membantu memperjelas bayangan titik timbul. Tekan
-                      Nyalakan Kamera atau unggah foto lembar Braille.
+                    <span className="text-[1.02rem] font-bold text-white">Kamera Belum Aktif</span>
+                    <span className="max-w-[34ch] text-[0.82rem] leading-relaxed text-white/75">
+                      Posisikan lembar Braille dengan pencahayaan dari samping agar bayangan titik timbul jelas.
                     </span>
                   </div>
                 )}
 
-                {isCameraActive && scanMode === "live" && livePreviewText && (
+                {!isCameraFullscreen && isCameraActive && scanMode === "live" && livePreviewText && (
                   <div
                     aria-hidden="true"
                     className="absolute bottom-3 left-3 right-3 z-10 flex items-center justify-between gap-3 rounded-[10px] bg-black/65 px-4 py-2.5 backdrop-blur-md text-white"
@@ -1775,6 +1864,91 @@ export default function BrailleScanner({
                   </div>
                 )}
               </>
+            )}
+
+            {/* Kontrol Bawah Khusus Layar Penuh */}
+            {isCameraFullscreen && (
+              <div className="relative z-30 flex flex-col items-center gap-3 w-full pb-2">
+                {scanMode === "live" && livePreviewText && (
+                  <div
+                    aria-hidden="true"
+                    className="w-full max-w-md flex items-center justify-between gap-3 rounded-xl bg-black/80 px-4 py-2.5 backdrop-blur-md text-white border border-white/20 shadow-2xl"
+                  >
+                    <span className="truncate text-[0.95rem] font-bold">{livePreviewText}</span>
+                    <span className="flex-none text-[0.8rem] font-semibold text-[#E6FF2E] tabular-nums">
+                      {livePolygons.length} sel {liveConfirmed ? "· stabil" : ""}
+                    </span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-center gap-4 sm:gap-6 w-full max-w-sm">
+                  <div className="flex items-center gap-1 bg-black/70 p-1.5 rounded-full backdrop-blur-md border border-white/20">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScanMode("live");
+                        setLiveStreaming(true);
+                        announce("Mode Live");
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-[0.78rem] font-bold transition-all ${
+                        scanMode === "live"
+                          ? "bg-[#E6FF2E] text-[#0A1628]"
+                          : "text-white/80 hover:text-white"
+                      }`}
+                    >
+                      Live
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScanMode("sentence");
+                        setLiveStreaming(false);
+                        announce("Mode Kalimat");
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-[0.78rem] font-bold transition-all ${
+                        scanMode === "sentence"
+                          ? "bg-[#E6FF2E] text-[#0A1628]"
+                          : "text-white/80 hover:text-white"
+                      }`}
+                    >
+                      Kalimat
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScanMode("photo");
+                        setLiveStreaming(false);
+                        announce("Mode Foto");
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-[0.78rem] font-bold transition-all ${
+                        scanMode === "photo"
+                          ? "bg-[#E6FF2E] text-[#0A1628]"
+                          : "text-white/80 hover:text-white"
+                      }`}
+                    >
+                      Foto
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (sourceMode === "phone") {
+                        handleRequestCaptureFromPhone();
+                      } else if (scanMode === "sentence") {
+                        executeSentenceBurstScan();
+                      } else {
+                        executeSingleOrFreezeScan(null, "webcam");
+                      }
+                    }}
+                    disabled={status === "loading" || (!isCameraActive && sourceMode !== "phone")}
+                    aria-label="Ambil foto Braille"
+                    className="flex h-[66px] w-[66px] items-center justify-center rounded-full bg-[#E6FF2E] text-[#0A1628] shadow-[0_0_24px_rgba(230,255,46,0.35)] active:scale-95 transition-all border-4 border-white/40 disabled:opacity-50"
+                  >
+                    <Camera size={28} strokeWidth={2.4} aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
             )}
           </div>
           <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
@@ -1873,6 +2047,17 @@ export default function BrailleScanner({
                 </button>
               </>
             )}
+
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={toggleCameraFullscreen}
+              aria-label="Mode layar penuh kamera"
+              title="Mode layar penuh"
+            >
+              <Maximize2 size={16} aria-hidden="true" />
+              <span className="hidden sm:inline">Layar Penuh</span>
+            </button>
 
             <button
               type="button"

@@ -399,7 +399,7 @@ html.dark .solid-hero-stage {
   height: 100vh;
   position: sticky;
   top: 0;
-  display: flex;
+  display: none;
   flex-direction: column;
   justify-content: space-between;
   background-color: var(--surface);
@@ -407,6 +407,12 @@ html.dark .solid-hero-stage {
   padding: 20px 14px;
   z-index: 30;
   overflow-y: auto;
+}
+
+@media (min-width: 1024px) {
+  .workspace-sidebar {
+    display: flex;
+  }
 }
 
 .mobile-sidebar-drawer {
@@ -755,11 +761,20 @@ html.dark .mobile-tab-btn[aria-current="page"] {
   margin: 0 auto 16px;
 }
 
-/* Viewfinder Kamera Solid (Tanpa Gradasi) */
+/* Utilitas Scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Viewfinder Kamera Solid & Fleksibel (Tanpa Potongan Teks di Seluler) */
 .camera-viewport {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  min-height: 250px;
   background-color: #08182e;
   border-radius: 14px;
   overflow: hidden;
@@ -767,6 +782,13 @@ html.dark .mobile-tab-btn[aria-current="page"] {
   align-items: center;
   justify-content: center;
   color: #edf3fb;
+}
+
+@media (min-width: 640px) {
+  .camera-viewport {
+    min-height: 320px;
+    aspect-ratio: 16 / 9;
+  }
 }
 
 /* Tombol Rapi dengan Radius Tegas 10px (Bukan Pill di Semua Elemen - R-11) */
@@ -784,6 +806,7 @@ html.dark .mobile-tab-btn[aria-current="page"] {
   color: var(--text);
   background-color: var(--surface);
   text-decoration: none;
+  white-space: nowrap;
   transition:
     background-color 160ms var(--ease),
     border-color 160ms var(--ease),
@@ -868,6 +891,7 @@ html.dark .mobile-tab-btn[aria-current="page"] {
   font-size: 0.83rem;
   font-weight: 600;
   white-space: nowrap;
+  flex-shrink: 0;
   transition: background-color 150ms var(--ease), color 150ms var(--ease);
 }
 
@@ -1072,37 +1096,37 @@ html.dark .card-interactive:hover {
 /* 4. Braket Bidik Sudut Viewfinder Kamera */
 .hud-corner {
   position: absolute;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border-color: rgba(230, 255, 46, 0.75);
   pointer-events: none;
   z-index: 4;
 }
 
 .hud-corner-tl {
-  top: 14px;
-  left: 14px;
+  top: 10px;
+  left: 10px;
   border-top: 2px solid;
   border-left: 2px solid;
 }
 
 .hud-corner-tr {
-  top: 14px;
-  right: 14px;
+  top: 10px;
+  right: 10px;
   border-top: 2px solid;
   border-right: 2px solid;
 }
 
 .hud-corner-bl {
-  bottom: 14px;
-  left: 14px;
+  bottom: 10px;
+  left: 10px;
   border-bottom: 2px solid;
   border-left: 2px solid;
 }
 
 .hud-corner-br {
-  bottom: 14px;
-  right: 14px;
+  bottom: 10px;
+  right: 10px;
   border-bottom: 2px solid;
   border-right: 2px solid;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Camera, CameraOff, CheckCircle2, Send, TriangleAlert } from "lucide-react";
+import { Camera, CameraOff, CheckCircle2, Maximize2, Minimize2, Send, TriangleAlert } from "lucide-react";
 import { useCamera } from "../hooks/useCamera";
 import { getWsBaseUrl } from "../services/api";
 import { measureSharpness, sharpnessLabel, BLUR_MIN } from "../utils/blur";
@@ -19,8 +19,25 @@ export default function PhoneCameraClient({ token, onExit }) {
   const [sharp, setSharp] = useState(0);
   const [sentCount, setSentCount] = useState(0);
   const [statusMsg, setStatusMsg] = useState("Menghubungkan ke dasbor komputer...");
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const wsRef = useRef(null);
   const sendCaptureRef = useRef(null);
+
+  const toggleFullscreen = () => {
+    setIsFullscreen((prev) => {
+      const next = !prev;
+      if (next) {
+        if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        }
+      } else {
+        if (document.exitFullscreen && document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+      }
+      return next;
+    });
+  };
 
   const sendCapture = async () => {
     if (!isCameraActive) {
@@ -151,7 +168,39 @@ export default function PhoneCameraClient({ token, onExit }) {
       </div>
 
       <div className="card flex flex-col gap-4">
-        <div className="camera-viewport">
+        <div
+          className={
+            isFullscreen
+              ? "fixed inset-0 z-[100] h-[100dvh] w-screen bg-[#040B17] flex flex-col justify-between overflow-hidden p-3 sm:p-5 select-none"
+              : "camera-viewport relative overflow-hidden"
+          }
+        >
+          {isFullscreen ? (
+            <div className="relative z-30 flex items-center justify-between w-full">
+              <span className="flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 text-[0.8rem] font-bold text-[#E6FF2E] backdrop-blur-md border border-white/15">
+                <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-ping" />
+                <span>Kamera HP Layar Penuh</span>
+              </span>
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/75 text-white hover:bg-black/90 hover:text-[#E6FF2E] backdrop-blur-md border border-white/20 text-[0.82rem] font-bold transition-colors min-h-[40px]"
+              >
+                <Minimize2 size={16} aria-hidden="true" />
+                <span>Keluar</span>
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              aria-label="Layar penuh kamera"
+              className="absolute top-3 right-3 z-20 flex h-9 w-9 items-center justify-center rounded-lg bg-black/60 text-white hover:bg-black/80 hover:text-[#E6FF2E] backdrop-blur-sm border border-white/15 transition-all shadow-sm"
+            >
+              <Maximize2 size={18} aria-hidden="true" />
+            </button>
+          )}
+
           <video
             ref={videoRef}
             autoPlay
@@ -160,12 +209,30 @@ export default function PhoneCameraClient({ token, onExit }) {
             width={1280}
             height={720}
             aria-label="Pratinjau kamera HP"
-            className={`h-full w-full object-contain ${isCameraActive ? "block" : "hidden"}`}
+            className={
+              isFullscreen
+                ? `absolute inset-0 h-full w-full object-contain pointer-events-none ${isCameraActive ? "block" : "hidden"}`
+                : `h-full w-full object-contain ${isCameraActive ? "block" : "hidden"}`
+            }
           />
           {!isCameraActive && (
-            <span className="flex items-center gap-2 px-4 text-center font-semibold text-white">
+            <span className="flex items-center justify-center gap-2 px-4 text-center font-semibold text-white z-10">
               <CameraOff size={22} aria-hidden="true" /> Kamera belum dinyalakan
             </span>
+          )}
+
+          {isFullscreen && isCameraActive && (
+            <div className="relative z-30 flex items-center justify-center w-full pb-4">
+              <button
+                type="button"
+                onClick={sendCapture}
+                disabled={wsState !== "connected"}
+                aria-label="Kirim Foto ke Komputer"
+                className="flex h-[72px] w-[72px] items-center justify-center rounded-full bg-[#E6FF2E] text-[#0A1628] shadow-[0_0_24px_rgba(230,255,46,0.35)] active:scale-95 transition-all border-4 border-white/40 disabled:opacity-50"
+              >
+                <Send size={28} strokeWidth={2.4} aria-hidden="true" />
+              </button>
+            </div>
           )}
         </div>
         <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
@@ -191,6 +258,15 @@ export default function PhoneCameraClient({ token, onExit }) {
                 disabled={wsState !== "connected"}
               >
                 <Send size={20} aria-hidden="true" /> Kirim Foto ke Dasbor
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={toggleFullscreen}
+                aria-label="Mode layar penuh kamera"
+              >
+                <Maximize2 size={18} aria-hidden="true" />
+                <span className="hidden sm:inline">Layar Penuh</span>
               </button>
               <button type="button" className="btn btn-secondary" onClick={stopCamera}>
                 <CameraOff size={20} aria-hidden="true" /> Matikan

@@ -803,11 +803,11 @@ function Shell() {
       )}
 
       {/* 3. AREA KERJA UTAMA & BREADCRUMB */}
-      <div className="flex-1 flex flex-col min-w-0 pb-16 lg:pb-8">
+      <div className="flex-1 flex flex-col min-w-0 pb-32 sm:pb-24 lg:pb-10">
         {/* BILAH ATAS KERJA: BREADCRUMB FUNGSIONAL & DAPAT DIKLIK */}
         <header className="workspace-topbar">
           <div className="w-full max-w-[1440px] mx-auto flex items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
               {/* Tombol hamburger menu HANYA untuk seluler */}
               <button
                 type="button"
@@ -815,16 +815,16 @@ function Shell() {
                   e.stopPropagation();
                   setMobileMenuOpen(true);
                 }}
-                className="lg:hidden flex items-center justify-center h-9 w-9 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-sunken)] transition-colors"
+                className="lg:hidden flex items-center justify-center h-9 w-9 flex-none rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-sunken)] transition-colors"
                 aria-label="Buka menu navigasi instrumen"
               >
                 <Menu size={18} aria-hidden="true" />
               </button>
 
-              {/* BREADCRUMB FUNGSIONAL & JELAS (Bebas Bug Blur) */}
+              {/* BREADCRUMB FUNGSIONAL & JELAS (Bebas Baris Turun di Seluler) */}
               <nav
                 aria-label="Navigasi remah roti"
-                className="flex items-center gap-1.5 sm:gap-2 text-[0.86rem] sm:text-[0.88rem]"
+                className="flex items-center gap-1 sm:gap-2 text-[0.86rem] sm:text-[0.88rem] min-w-0"
               >
                 <button
                   type="button"
@@ -833,19 +833,19 @@ function Shell() {
                     setMobileMenuOpen(false);
                     handleSelectNav("beranda");
                   }}
-                  className="font-medium text-muted-theme hover:text-[var(--text)] transition-colors border-0 bg-transparent px-2 py-1 rounded-md hover:bg-[var(--surface-sunken)] cursor-pointer"
+                  className="hidden sm:inline-block font-medium text-muted-theme hover:text-[var(--text)] transition-colors border-0 bg-transparent px-1.5 py-1 rounded-md hover:bg-[var(--surface-sunken)] cursor-pointer whitespace-nowrap"
                   title="Kembali ke Beranda Ruang Kerja"
                 >
                   Ruang Kerja
                 </button>
                 <span
-                  className="text-muted-theme/40 text-[0.75rem]"
+                  className="hidden sm:inline text-muted-theme/40 text-[0.75rem]"
                   aria-hidden="true"
                 >
                   /
                 </span>
                 <span
-                  className="font-bold text-[var(--text)] px-1 py-1"
+                  className="font-bold text-[var(--text)] px-1 py-1 truncate whitespace-nowrap"
                   aria-current="page"
                 >
                   {currentNavItem.label}
