@@ -3,7 +3,7 @@
 // HARUS sama dengan preprocess.py di server: lebar 320 px, ambang awal 60.
 // Pada lebar 100 px (versi lama) detail titik Braille sudah hilang, sehingga
 // gambar yang sangat buram pun masih lolos. Kalibrasi ambang dengan foto Anda.
-export const BLUR_MIN = 60;
+export const BLUR_MIN = 30;
 const UKURAN_CEK = 320;
 
 // source bisa berupa <video>, <img>, <canvas>, atau ImageBitmap.

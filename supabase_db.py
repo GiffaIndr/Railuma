@@ -234,7 +234,7 @@ class RailumaStore:
                 if r.ok:
                     sessions = r.json()
                     r_items = requests.get(
-                        f"{SUPABASE_URL}/rest/v1/railuma_scan_items?select=id,session_id,final_text,status,confidence,created_at&order=created_at.desc",
+                        f"{SUPABASE_URL}/rest/v1/railuma_scan_items?user_id=eq.{user_id}&select=id,session_id,final_text,status,confidence,created_at&order=created_at.desc&limit=100",
                         headers=_headers(access_token),
                         timeout=2.0,
                     )

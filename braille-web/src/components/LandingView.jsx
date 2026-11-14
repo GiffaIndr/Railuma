@@ -97,7 +97,7 @@ function CorrectionDemo() {
               letter={showWrong ? `${c.wrong}?` : c.key}
               dots={showWrong ? c.wrongDots : c.dots}
               flagged={showWrong}
-              onToggle={() => isTarget && setFixed((v) => !v)}
+              onToggle={() => setFixed((v) => !v)}
             />
           );
         })}
@@ -202,7 +202,7 @@ function ParallaxImage({
   );
 }
 
-export default function LandingView({ onOpenAuth }) {
+export default function LandingView({ onOpenAuth, currentUser, onGoStudio }) {
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
@@ -253,14 +253,25 @@ export default function LandingView({ onOpenAuth }) {
               </p>
 
               <div className="hero-stagger-3 flex flex-wrap items-center gap-4">
-                <button
-                  type="button"
-                  onClick={() => onOpenAuth("login")}
-                  className="btn btn-limau !px-6 !py-3 text-[0.98rem]"
-                >
-                  <span>Mulai membaca</span>
-                  <ArrowRight size={18} className="arrow-glide" aria-hidden="true" />
-                </button>
+                {currentUser ? (
+                  <button
+                    type="button"
+                    onClick={onGoStudio}
+                    className="btn btn-limau !px-6 !py-3 text-[0.98rem]"
+                  >
+                    <span>Buka Ruang Kerja</span>
+                    <ArrowRight size={18} className="arrow-glide" aria-hidden="true" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onOpenAuth("login")}
+                    className="btn btn-limau !px-6 !py-3 text-[0.98rem]"
+                  >
+                    <span>Mulai membaca</span>
+                    <ArrowRight size={18} className="arrow-glide" aria-hidden="true" />
+                  </button>
+                )}
                 <a
                   href="#cara-kerja"
                   className="link-draw inline-flex min-h-[44px] items-center text-[0.98rem] font-semibold text-white"
@@ -406,21 +417,34 @@ export default function LandingView({ onOpenAuth }) {
               membaca<span className="text-[#E6FF2E]">.</span>
             </h2>
             <div className="flex flex-wrap items-center gap-4">
-              <button
-                type="button"
-                onClick={() => onOpenAuth("register")}
-                className="btn btn-limau !px-6 !py-3 text-[0.98rem]"
-              >
-                <span>Buat akun</span>
-                <ArrowRight size={18} className="arrow-glide" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                onClick={() => onOpenAuth("login")}
-                className="link-draw inline-flex min-h-[44px] items-center border-0 bg-transparent p-0 text-[0.98rem] font-semibold text-white"
-              >
-                Sudah punya akun? Masuk
-              </button>
+              {currentUser ? (
+                <button
+                  type="button"
+                  onClick={onGoStudio}
+                  className="btn btn-limau !px-6 !py-3 text-[0.98rem]"
+                >
+                  <span>Buka Ruang Kerja Railuma</span>
+                  <ArrowRight size={18} className="arrow-glide" aria-hidden="true" />
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onOpenAuth("register")}
+                    className="btn btn-limau !px-6 !py-3 text-[0.98rem]"
+                  >
+                    <span>Buat akun</span>
+                    <ArrowRight size={18} className="arrow-glide" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onOpenAuth("login")}
+                    className="link-draw inline-flex min-h-[44px] items-center border-0 bg-transparent p-0 text-[0.98rem] font-semibold text-white"
+                  >
+                    Sudah punya akun? Masuk
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

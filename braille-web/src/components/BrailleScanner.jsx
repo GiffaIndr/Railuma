@@ -6,6 +6,7 @@ import {
   CameraOff,
   Check,
   CheckCircle2,
+  ChevronRight,
   Copy,
   Download,
   FileText,
@@ -83,10 +84,43 @@ export default function BrailleScanner({
   const { announce } = useA11y();
   const toast = useToast();
 
-  // Sesi dan item riwayat (Supabase)
-  const [sessions, setSessions] = useState([]);
-  const [sessionsState, setSessionsState] = useState("loading"); // loading | ready | error
-  const [activeSessionId, setActiveSessionId] = useState(null);
+  // Sesi dan item riwayat (Supabase) - Inisialisasi cepat dari cache lokal
+  const [sessions, setSessions] = useState(() => {
+    try {
+      const cached = localStorage.getItem("railuma_cached_sessions");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      /* ignore */
+    }
+    return [];
+  });
+  const [sessionsState, setSessionsState] = useState(() => {
+    try {
+      const cached = localStorage.getItem("railuma_cached_sessions");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return "ready";
+      }
+    } catch {
+      /* ignore */
+    }
+    return "loading";
+  });
+  const [activeSessionId, setActiveSessionId] = useState(() => {
+    try {
+      const cached = localStorage.getItem("railuma_cached_sessions");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed[0]?.id) return parsed[0].id;
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  });
   const [activeSession, setActiveSession] = useState(null);
   const [sessionFilter, setSessionFilter] = useState("");
   const [renamingId, setRenamingId] = useState(null);
@@ -621,13 +655,13 @@ export default function BrailleScanner({
       }
       const s = measureSharpness(videoRef.current);
       setSharp(s.variance);
-      if (s.ready && s.isBlurry) {
+      if (s.ready && s.variance < 15) {
         setStatus("blur");
-        announce("Gambar buram. Tahan kamera sebentar lalu coba lagi.");
+        announce("Gambar terlalu gelap atau kamera tertutup. Tahan kamera sebentar lalu coba lagi.");
         setFullscreenFeedback({
           type: "blur",
-          message: "Gambar Terdeteksi Buram",
-          detail: `Ketajaman: ${s.variance} (minimal ${BLUR_MIN}). Tahan kamera stabil dan coba lagi.`,
+          message: "Kamera Tertutup atau Terlalu Gelap",
+          detail: `Ketajaman: ${s.variance} (minimal 15). Beri pencahayaan cukup dan coba lagi.`,
         });
         if (typeof navigator !== "undefined" && navigator.vibrate) {
           navigator.vibrate([80, 50, 80]);
@@ -664,7 +698,7 @@ export default function BrailleScanner({
       const res = await createSessionScan(activeSessionId, blob, {
         mode: scanMode,
         source: customSource,
-        checkBlur: customSource !== "upload",
+        checkBlur: false,
         overrideFinalText: scanMode === "live" && livePreviewText ? livePreviewText : null,
         overrideRawText: scanMode === "live" && liveRawText ? liveRawText : null,
       });
@@ -1652,7 +1686,7 @@ export default function BrailleScanner({
         >
           Studio
         </button>
-        <span aria-hidden="true" className="opacity-40">/</span>
+        <ChevronRight size={13} aria-hidden="true" className="opacity-45 flex-none" />
         <button
           type="button"
           onClick={() => switchSubView("sesi")}
@@ -1662,7 +1696,7 @@ export default function BrailleScanner({
         </button>
         {activeSession?.title && (
           <>
-            <span aria-hidden="true" className="opacity-40">/</span>
+            <ChevronRight size={13} aria-hidden="true" className="opacity-45 flex-none" />
             <span className="font-semibold text-[var(--text)] truncate max-w-[200px] sm:max-w-[320px]">
               {activeSession.title}
             </span>

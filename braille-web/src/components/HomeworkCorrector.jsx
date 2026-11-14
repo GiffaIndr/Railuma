@@ -67,7 +67,7 @@ export default function HomeworkCorrector() {
     }
     const s = measureSharpness(videoRef.current);
     setSharp(s.variance);
-    if (s.ready && s.isBlurry) {
+    if (s.ready && s.variance < 15) {
       setStatus("blur");
       return;
     }
@@ -76,7 +76,7 @@ export default function HomeworkCorrector() {
     try {
       const blob = await captureFrame();
       if (!blob) throw new Error("Gagal mengambil gambar");
-      const data = await translateBrailleImage(blob);
+      const data = await translateBrailleImage(blob, false);
       if (data.status === "blurry") {
         setSharp(data.sharpness ?? 0);
         setStatus("blur");
@@ -101,11 +101,11 @@ export default function HomeworkCorrector() {
       const bmp = await createImageBitmap(file);
       const s = measureSharpness(bmp);
       setSharp(s.variance);
-      if (s.ready && s.isBlurry) {
+      if (s.ready && s.variance < 15) {
         setStatus("blur");
         return;
       }
-      const data = await translateBrailleImage(file);
+      const data = await translateBrailleImage(file, false);
       if (data.status === "blurry") {
         setSharp(data.sharpness ?? 0);
         setStatus("blur");

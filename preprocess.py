@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 
 # Sinkron dengan braille-web/src/utils/blur.js (lebar 320 px, ambang 60).
-BLUR_MIN = float(os.getenv("BLUR_MIN", "60"))
+BLUR_MIN = float(os.getenv("BLUR_MIN", "30"))
 _UKURAN_CEK = 320
 
 

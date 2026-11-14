@@ -239,11 +239,14 @@ export const logoutUser = async () => {
   }
 };
 
-export const translateBrailleImage = async (imageBlob) => {
+export const translateBrailleImage = async (imageBlob, checkBlur = false) => {
   const formData = new FormData();
   formData.append("file", imageBlob, "braille-capture.jpg");
-  const query = isClaheOn() ? "?clahe=true" : "";
-  return fetchJson(`${API_URL}/translate/${query}`, {
+  const params = new URLSearchParams();
+  if (isClaheOn()) params.append("clahe", "true");
+  if (!checkBlur) params.append("check_blur", "false");
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  return fetchJson(`${API_URL}/translate/${qs}`, {
     method: "POST",
     body: formData,
   }, 45000);

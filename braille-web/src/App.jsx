@@ -306,6 +306,7 @@ function Shell() {
 
   const [healthInfo, setHealthInfo] = useState(null);
   const [showTour, setShowTour] = useState(false);
+  const [isCameraFullscreen, setIsCameraFullscreen] = useState(false);
   const [pairTokenUrl, setPairTokenUrl] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get("pair") || "";
@@ -557,14 +558,14 @@ function Shell() {
                 aria-label={
                   darkMode ? "Ganti ke tema siang" : "Ganti ke tema malam"
                 }
-                className="btn btn-secondary btn-sm"
+                className="btn btn-secondary btn-sm !w-[88px] !justify-center flex-none"
               >
                 {darkMode ? (
                   <Sun size={16} aria-hidden="true" />
                 ) : (
                   <Moon size={16} aria-hidden="true" />
                 )}
-                <span className="hidden sm:inline">
+                <span>
                   {darkMode ? "Siang" : "Malam"}
                 </span>
               </button>
@@ -683,7 +684,12 @@ function Shell() {
 
         <main id="isi" tabIndex={-1} className="flex flex-1 flex-col">
           {view === "landing" ? (
-            <LandingView onOpenAuth={handleOpenAuth} healthInfo={healthInfo} />
+            <LandingView
+              onOpenAuth={handleOpenAuth}
+              healthInfo={healthInfo}
+              currentUser={currentUser}
+              onGoStudio={() => setView("studio")}
+            />
           ) : (
             <AuthCard
               key={authMode}
@@ -718,11 +724,10 @@ function Shell() {
   // ============================================================================
   const isScannerSubView =
     navId === "beranda" || navId === "scan" || navId === "sesi";
-  const [isCameraFullscreen, setIsCameraFullscreen] = useState(false);
-  const firstName = (currentUser.name || currentUser.email || "Pengguna").split(
+  const firstName = (currentUser?.name || currentUser?.email || "Pengguna").split(
     " ",
   )[0];
-  const initials = (currentUser.name || currentUser.email || "P")
+  const initials = (currentUser?.name || currentUser?.email || "P")
     .split(" ")
     .map((w) => w[0])
     .filter(Boolean)

@@ -246,7 +246,7 @@ export default function AuthCard({
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="mt-6 flex flex-1 flex-col justify-between gap-6" noValidate>
+          <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-6" noValidate>
             <div className="flex flex-col gap-4">
               {mode === "register" && (
                 <div>

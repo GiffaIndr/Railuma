@@ -163,6 +163,7 @@ def labels():
 
 
 @app.post("/translate/")
+@app.post("/translate")
 def translate_braille(
     file: UploadFile = File(...),
     clahe: bool = False,
