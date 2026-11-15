@@ -346,11 +346,11 @@ export default function HomeworkCorrector() {
             <ul className="m-0 flex max-h-[380px] list-none flex-col gap-2.5 overflow-y-auto p-0">
               {report.rows.map((r) => (
                 <li
-                  key={r.n}
+                  key={r.number || r.n}
                   className="rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-sunken)]/50 p-3.5 text-[0.88rem]"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <strong>Nomor {r.n}</strong>
+                    <strong>Nomor {r.number || r.n}</strong>
                     <span
                       className={`status-chip ${
                         r.ok ? "status-chip-ok" : "status-chip-review"
@@ -360,7 +360,7 @@ export default function HomeworkCorrector() {
                     </span>
                   </div>
                   <p className="m-0 mt-1.5">
-                    Jawaban murid: <strong>{r.student}</strong>
+                    Jawaban murid: <strong>{r.student || r.got || "(kosong / tidak terbaca)"}</strong>
                   </p>
                   {!r.ok && (
                     <p className="m-0 mt-0.5 text-muted-theme">

@@ -697,7 +697,7 @@ function Shell() {
               onBackToLanding={() => setView("landing")}
               onAuthenticated={(user) => {
                 setCurrentUser(user);
-                setNavId("scan");
+                setNavId("beranda");
                 setView("studio");
               }}
             />

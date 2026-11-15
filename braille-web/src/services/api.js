@@ -312,6 +312,11 @@ export const patchScanItem = async (itemId, payload) =>
     body: JSON.stringify(payload),
   });
 
+export const deleteSessionScan = async (sessionId, itemId) =>
+  fetchJson(`${API_URL}/api/v1/sessions/${encodeURIComponent(sessionId)}/scans/${encodeURIComponent(itemId)}`, {
+    method: "DELETE",
+  });
+
 export const createPairingToken = async (sessionId = null) =>
   fetchJson(`${API_URL}/api/v1/pairing`, {
     method: "POST",

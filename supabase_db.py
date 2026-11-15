@@ -233,12 +233,16 @@ class RailumaStore:
                 )
                 if r.ok:
                     sessions = r.json()
-                    r_items = requests.get(
-                        f"{SUPABASE_URL}/rest/v1/railuma_scan_items?user_id=eq.{user_id}&select=id,session_id,final_text,status,confidence,created_at&order=created_at.desc&limit=100",
-                        headers=_headers(access_token),
-                        timeout=2.0,
-                    )
-                    items = r_items.json() if r_items.ok else []
+                    session_ids = [s["id"] for s in sessions if "id" in s]
+                    items = []
+                    if session_ids:
+                        ids_str = ",".join(session_ids)
+                        r_items = requests.get(
+                            f"{SUPABASE_URL}/rest/v1/railuma_scan_items?session_id=in.({ids_str})&select=id,session_id,final_text,status,confidence,created_at&order=created_at.desc&limit=200",
+                            headers=_headers(access_token),
+                            timeout=2.0,
+                        )
+                        items = r_items.json() if (r_items.ok and isinstance(r_items.json(), list)) else []
                     by_ses: dict[str, list] = {}
                     for it in items:
                         by_ses.setdefault(it["session_id"], []).append(it)
@@ -614,6 +618,43 @@ class RailumaStore:
                 _simpan_lokal(db)
                 return {**it, "revisions": revs + [rev]}
         return None
+
+    def delete_scan_item(self, user_id: str, session_id: str, item_id: str, access_token: str | None = None) -> bool:
+        if not SUPABASE_OFFLINE and access_token and not access_token.startswith("local_"):
+            try:
+                r_ses = requests.get(
+                    f"{SUPABASE_URL}/rest/v1/railuma_sessions?id=eq.{session_id}&user_id=eq.{user_id}&select=id",
+                    headers=_headers(access_token),
+                    timeout=2.0,
+                )
+                if not r_ses.ok or not r_ses.json():
+                    return False
+                r_del = requests.delete(
+                    f"{SUPABASE_URL}/rest/v1/railuma_scan_items?id=eq.{item_id}&session_id=eq.{session_id}",
+                    headers=_headers(access_token),
+                    timeout=2.0,
+                )
+                if r_del.ok:
+                    requests.delete(
+                        f"{SUPABASE_URL}/rest/v1/railuma_revisions?item_id=eq.{item_id}",
+                        headers=_headers(access_token),
+                        timeout=2.0,
+                    )
+                    return True
+            except Exception:  # noqa: BLE001
+                pass
+
+        db = _baca_lokal()
+        user_session_ids = {s["id"] for s in db["sessions"] if s.get("user_id") == user_id}
+        if session_id not in user_session_ids:
+            return False
+        orig_len = len(db["items"])
+        db["items"] = [it for it in db["items"] if not (it["id"] == item_id and it["session_id"] == session_id)]
+        if len(db["items"]) < orig_len:
+            db["revisions"] = [rv for rv in db["revisions"] if rv.get("item_id") != item_id]
+            _simpan_lokal(db)
+            return True
+        return False
 
 
 STORE = RailumaStore()

@@ -394,6 +394,14 @@ def api_patch_scan(item_id: str, req: ScanPatchReq, auth: dict = Depends(require
     return {"status": "success", "item": updated}
 
 
+@app.delete("/api/v1/sessions/{session_id}/scans/{item_id}")
+def api_delete_scan_item(session_id: str, item_id: str, auth: dict = Depends(require_auth)):
+    ok = STORE.delete_scan_item(auth["id"], session_id, item_id, auth["token"])
+    if not ok:
+        raise HTTPException(status_code=404, detail="Item pindai tidak ditemukan atau bukan milik akun Anda.")
+    return {"deleted": True, "item_id": item_id}
+
+
 @app.post("/api/v1/pairing")
 def api_create_pairing(req: PairingCreateReq, auth: dict = Depends(require_auth)):
     now = time.time()

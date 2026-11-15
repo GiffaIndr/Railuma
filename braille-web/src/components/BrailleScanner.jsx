@@ -32,6 +32,7 @@ import {
   createSession,
   createSessionScan,
   deleteSession,
+  deleteSessionScan,
   getSessionDetail,
   getWsBaseUrl,
   isClaheOn,
@@ -111,6 +112,8 @@ export default function BrailleScanner({
   });
   const [activeSessionId, setActiveSessionId] = useState(() => {
     try {
+      const savedActive = localStorage.getItem("railuma_active_session_id");
+      if (savedActive) return savedActive;
       const cached = localStorage.getItem("railuma_cached_sessions");
       if (cached) {
         const parsed = JSON.parse(cached);
@@ -121,6 +124,16 @@ export default function BrailleScanner({
     }
     return null;
   });
+
+  useEffect(() => {
+    if (activeSessionId && !activeSessionId.startsWith("temp-")) {
+      try {
+        localStorage.setItem("railuma_active_session_id", activeSessionId);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [activeSessionId]);
   const [activeSession, setActiveSession] = useState(null);
   const [sessionFilter, setSessionFilter] = useState("");
   const [renamingId, setRenamingId] = useState(null);
@@ -304,7 +317,14 @@ export default function BrailleScanner({
           // abaikan
         }
         setSessionsState("ready");
-        const targetId = selectId || activeSessionId || daftar[0]?.id;
+        const savedActive = (() => {
+          try {
+            return localStorage.getItem("railuma_active_session_id");
+          } catch {
+            return null;
+          }
+        })();
+        const targetId = selectId || (savedActive && daftar.some((d) => d.id === savedActive) ? savedActive : null) || (activeSessionId && daftar.some((d) => d.id === activeSessionId) ? activeSessionId : null) || daftar[0]?.id;
         if (targetId) {
           setActiveSessionId(targetId);
         }
@@ -389,8 +409,20 @@ export default function BrailleScanner({
           // abaikan
         }
         setSessionsState("ready");
-        if (daftar[0]?.id) {
-          setActiveSessionId(daftar[0].id);
+        const savedActive = (() => {
+          try {
+            return localStorage.getItem("railuma_active_session_id");
+          } catch {
+            return null;
+          }
+        })();
+        const target = (savedActive && daftar.some((d) => d.id === savedActive))
+          ? savedActive
+          : (activeSessionId && daftar.some((d) => d.id === activeSessionId))
+            ? activeSessionId
+            : (daftar[0]?.id || null);
+        if (target) {
+          setActiveSessionId(target);
         }
       })
       .catch((err) => {
@@ -923,17 +955,34 @@ export default function BrailleScanner({
   };
 
   const handleCreateSession = async () => {
+    const num = String(sessions.length + 1).padStart(3, "0");
+    const title = `Sesi ${num}`;
+    const tempId = `temp-${Date.now()}`;
+    const optimisticSession = {
+      id: tempId,
+      title,
+      scan_count: 0,
+      last_preview: "Sesi baru dibuat. Siap digunakan.",
+      pinned: false,
+      created_at: new Date().toISOString(),
+    };
+    // Instan 0ms respon antarmuka
+    setSessions((prev) => [optimisticSession, ...prev]);
+    setActiveSessionId(tempId);
+    announce(`${title} dibuat.`);
+    toast.success(`${title} berhasil dibuat.`);
+
     try {
-      const num = String(sessions.length + 1).padStart(3, "0");
-      const title = `Sesi ${num}`;
       const baru = await createSession(title);
-      await loadSessionsList(baru.id, false);
+      setSessions((prev) =>
+        prev.map((s) => (s.id === tempId ? { ...s, id: baru.id } : s)),
+      );
       setActiveSessionId(baru.id);
-      announce(`${title} dibuat.`);
-      toast.success(`${title} berhasil dibuat.`);
+      loadSessionsList(baru.id, false);
     } catch (err) {
       console.error(err);
-      toast.error("Gagal membuat sesi baru.");
+      toast.error("Gagal menyinkronkan sesi ke server.");
+      loadSessionsList();
     }
   };
 
@@ -968,20 +1017,45 @@ export default function BrailleScanner({
   };
 
   const handleDeleteSession = async (ses) => {
+    const nextList = sessions.filter((x) => x.id !== ses.id);
+    setSessions(nextList);
+    if (activeSessionId === ses.id) {
+      const nextId = nextList[0]?.id || null;
+      setActiveSessionId(nextId);
+    }
+    announce(`Sesi ${ses.title} dihapus.`);
+    toast.success(`Sesi "${ses.title}" berhasil dihapus.`);
+
     try {
       await deleteSession(ses.id);
-      const nextList = sessions.filter((x) => x.id !== ses.id);
-      setSessions(nextList);
-      if (activeSessionId === ses.id) {
-        const nextId = nextList[0]?.id || null;
-        setActiveSessionId(nextId);
-        if (!nextId) await loadSessionsList();
-      }
-      announce(`Sesi ${ses.title} dihapus.`);
-      toast.success(`Sesi "${ses.title}" berhasil dihapus.`);
+      if (!nextList[0]?.id) await loadSessionsList();
     } catch (err) {
       console.error(err);
-      toast.error("Gagal menghapus sesi.");
+      toast.error("Gagal menghapus sesi di server.");
+      loadSessionsList();
+    }
+  };
+
+  const handleDeleteScanItem = async (itemId) => {
+    if (!window.confirm("Hapus hasil tangkapan ini dari sesi?")) return;
+    try {
+      setSessionItems((prev) => prev.filter((x) => x.id !== itemId));
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === activeSessionId
+            ? { ...s, scan_count: Math.max(0, (s.scan_count || 1) - 1) }
+            : s,
+        ),
+      );
+      announce("Tangkapan dihapus dari sesi.");
+      toast.success("Tangkapan berhasil dihapus.");
+      await deleteSessionScan(activeSessionId, itemId);
+      await loadActiveSessionDetail(activeSessionId);
+      await loadSessionsList(activeSessionId, false);
+    } catch (err) {
+      console.error(err);
+      toast.error("Gagal menghapus tangkapan dari server.");
+      await loadActiveSessionDetail(activeSessionId);
     }
   };
 
@@ -1368,7 +1442,7 @@ export default function BrailleScanner({
     return (
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Kolom Kiri (4 Kolom): Daftar Semua Sesi */}
-        <aside aria-label="Daftar sesi pindai" className="card flex flex-col gap-4 lg:col-span-4">
+        <aside aria-label="Daftar sesi pindai" className="card flex flex-col gap-4 lg:col-span-4 lg:sticky lg:top-20 lg:self-start lg:max-h-[calc(100vh-100px)]">
           <div className="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-3">
             <h2 className="m-0 text-[1.08rem] font-bold">Daftar Sesi</h2>
             <button type="button" className="btn btn-primary btn-sm" onClick={handleCreateSession}>
@@ -1396,7 +1470,7 @@ export default function BrailleScanner({
             />
           </div>
 
-          <ul className="m-0 flex max-h-[540px] list-none flex-col gap-2.5 overflow-y-auto p-0">
+          <ul className="m-0 flex flex-1 list-none flex-col gap-2.5 overflow-y-auto p-0 pr-1">
             {filteredSessions.map((ses, idx) => {
               const isSelected = ses.id === activeSessionId;
               return (
@@ -1657,6 +1731,15 @@ export default function BrailleScanner({
                         <Copy size={15} aria-hidden="true" />
                         <span>Salin</span>
                       </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm text-[var(--bahaya)] hover:!border-[var(--bahaya)] ml-auto"
+                        onClick={() => handleDeleteScanItem(it.id)}
+                        aria-label={`Hapus tangkapan nomor ${idx + 1}`}
+                      >
+                        <Trash2 size={15} aria-hidden="true" />
+                        <span>Hapus</span>
+                      </button>
                     </div>
                   </li>
                 );
@@ -1726,11 +1809,16 @@ export default function BrailleScanner({
                   {sessions.length === 0 ? (
                     <option value="">Sesi 001 · Catatan Braille</option>
                   ) : (
-                    sessions.map((s, i) => (
-                      <option key={s.id} value={s.id}>
-                        Sesi {String(i + 1).padStart(2, "0")} · {s.title}
-                      </option>
-                    ))
+                    sessions.map((s, i) => {
+                      const displayTitle = s.title.toLowerCase().startsWith("sesi")
+                        ? s.title
+                        : `#${i + 1} · ${s.title}`;
+                      return (
+                        <option key={s.id} value={s.id}>
+                          {displayTitle}
+                        </option>
+                      );
+                    })
                   )}
                 </select>
                 <button
@@ -2005,13 +2093,15 @@ export default function BrailleScanner({
                           : "h-full w-full object-contain"
                       }
                     />
-                    <div
-                      aria-hidden="true"
-                      className="absolute top-3 left-3 z-10 flex items-center gap-2 rounded-full bg-black/75 px-3 py-1 text-[0.78rem] font-bold text-[#E6FF2E] backdrop-blur-sm shadow-sm"
-                    >
-                      <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-ping" />
-                      <span>Live Kamera HP</span>
-                    </div>
+                    {!isCameraFullscreen && (
+                      <div
+                        aria-hidden="true"
+                        className="absolute top-3 left-3 z-10 flex items-center gap-2 rounded-full bg-black/75 px-3 py-1 text-[0.78rem] font-bold text-[#E6FF2E] backdrop-blur-sm shadow-sm"
+                      >
+                        <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-ping" />
+                        <span>Live Kamera HP</span>
+                      </div>
+                    )}
                     <div className="scanner-sweep-line" aria-hidden="true" />
                   </>
                 ) : (
@@ -2275,6 +2365,15 @@ export default function BrailleScanner({
                   <span>Salin Tautan HP</span>
                 </button>
               </>
+            ) : sourceMode === "upload" ? (
+              <button
+                type="button"
+                className="btn btn-primary flex-1"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload size={18} aria-hidden="true" />
+                <span>Pilih Berkas Foto Braille</span>
+              </button>
             ) : !isCameraActive ? (
               <button
                 type="button"
@@ -2344,15 +2443,6 @@ export default function BrailleScanner({
             >
               <Maximize2 size={16} aria-hidden="true" />
               <span className="hidden sm:inline">Layar Penuh</span>
-            </button>
-
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Upload size={18} aria-hidden="true" />
-              <span>Unggah Berkas</span>
             </button>
           </div>
 
