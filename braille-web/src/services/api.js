@@ -77,7 +77,7 @@ export const parseOAuthHash = () => {
 
 export const getAuthToken = () => {
   try {
-    return localStorage.getItem(AUTH_TOKEN_KEY) || "";
+    return localStorage.getItem(AUTH_TOKEN_KEY) || sessionStorage.getItem(AUTH_TOKEN_KEY) || "";
   } catch {
     return "";
   }
@@ -85,20 +85,25 @@ export const getAuthToken = () => {
 
 export const getSavedUser = () => {
   try {
-    const raw = localStorage.getItem(AUTH_USER_KEY);
+    const raw = localStorage.getItem(AUTH_USER_KEY) || sessionStorage.getItem(AUTH_USER_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
 };
 
-export const setAuthSession = (token, user) => {
+export const setAuthSession = (token, user, remember = true) => {
   try {
+    const primaryStorage = remember ? localStorage : sessionStorage;
+    const secondaryStorage = remember ? sessionStorage : localStorage;
+
     if (token) {
-      localStorage.setItem(AUTH_TOKEN_KEY, token);
+      primaryStorage.setItem(AUTH_TOKEN_KEY, token);
+      secondaryStorage.removeItem(AUTH_TOKEN_KEY);
     }
     if (user) {
-      localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+      primaryStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+      secondaryStorage.removeItem(AUTH_USER_KEY);
     }
   } catch {
     // abaikan
@@ -109,6 +114,8 @@ export const clearAuthSession = () => {
   try {
     localStorage.removeItem(AUTH_TOKEN_KEY);
     localStorage.removeItem(AUTH_USER_KEY);
+    sessionStorage.removeItem(AUTH_TOKEN_KEY);
+    sessionStorage.removeItem(AUTH_USER_KEY);
   } catch {
     // abaikan
   }
@@ -195,26 +202,26 @@ async function fetchJson(url, options = {}, timeoutMs = 35000) {
   }
 }
 
-export const registerUser = async ({ name = "", email, password }) => {
+export const registerUser = async ({ name = "", email, password, remember = true }) => {
   const res = await fetchJson(`${API_URL}/api/v1/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, email, password }),
   }, 30000);
   if (res.access_token && res.user) {
-    setAuthSession(res.access_token, res.user);
+    setAuthSession(res.access_token, res.user, remember);
   }
   return res;
 };
 
-export const loginUser = async ({ email, password }) => {
+export const loginUser = async ({ email, password, remember = true }) => {
   const res = await fetchJson(`${API_URL}/api/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   }, 30000);
   if (res.access_token && res.user) {
-    setAuthSession(res.access_token, res.user);
+    setAuthSession(res.access_token, res.user, remember);
   }
   return res;
 };
@@ -222,7 +229,8 @@ export const loginUser = async ({ email, password }) => {
 export const fetchCurrentUser = async () => {
   const res = await fetchJson(`${API_URL}/api/v1/auth/me`, {}, 25000);
   if (res.user) {
-    setAuthSession(getAuthToken(), res.user);
+    const isLocal = Boolean(sessionStorage.getItem(AUTH_TOKEN_KEY));
+    setAuthSession(getAuthToken(), res.user, !isLocal);
   }
   return res.user;
 };

@@ -6,24 +6,24 @@ const TOUR_STORAGE_KEY = "railuma_onboarding_completed";
 const STEPS = [
   {
     icon: Camera,
-    title: "1. Arahkan Kamera ke Tulisan Braille",
+    title: "1. Arahkan Kamera atau Unggah Berkas",
     description:
-      "Gunakan kamera laptop atau hubungkan kamera HP Anda. Pastikan lembar kertas Braille mendapatkan pencahayaan yang cukup dan tegak lurus terhadap kamera.",
-    tip: "Tip: Tekan tombol 'Kamera HP' jika ingin memindai lembar kertas dari atas meja dengan nyaman.",
+      "Arahkan kamera ke lembaran kertas Braille atau unggah foto dokumen. Pastikan kertas datar dan bayangan tidak menutupi titik-titik timbul.",
+    tip: "Kiat: Gunakan tombol 'Kamera HP' jika ingin memposisikan ponsel sebagai kamera dokumen nirkabel di atas meja.",
   },
   {
     icon: CheckCheck,
-    title: "2. Verifikasi & Koreksi Sel 6-Titik",
+    title: "2. Verifikasi Hasil Pindai & Kotak Sel",
     description:
-      "Model visi komputer Railuma akan memetakan setiap sel 6-titik secara otomatis. Jika ada huruf yang pudar atau miring, sistem kamus KBBI 69.741 kata akan memberi saran koreksi.",
-    tip: "Tip: Anda dapat mengetuk sel huruf mana pun untuk melihat alternatif karakter berjarak Hamming 1.",
+      "Detektor menandai setiap sel 6-titik. Sel dengan keyakinan rendah ditandai tanda tanya (?). Ketuk sel tersebut untuk memeriksa pola titik atau menyetujui hurufnya.",
+    tip: "Kiat: Kamus bahasa Indonesia 69.741 kata otomatis memperbaiki kata bila ada satu titik timbul yang meleset.",
   },
   {
     icon: Volume2,
-    title: "3. Dengarkan Pembacaan & Kelola Sesi",
+    title: "3. Simpan Sesi & Dengarkan Hasil",
     description:
-      "Hasil terjemahan dapat langsung dibacakan dengan suara sintesis atau dibaca pembaca layar. Seluruh hasil tersimpan rapi per sesi di akun Anda.",
-    tip: "Tip: Tersedia juga konversi Suara ke Reglet untuk membantu penusukan stylus dari belakang kertas.",
+      "Semua tangkapan tersusun rapi di sesi aktif. Anda bisa mendengarkan pembacaan suara, menyalin teks, atau mengunduh rangkuman ke format PDF dan TXT.",
+    tip: "Kiat: Butuh memandu penusukan stylus? Buka menu 'Teks/Suara ke Braille' untuk simulasi tusuk Reglet terbalik per baris.",
   },
 ];
 

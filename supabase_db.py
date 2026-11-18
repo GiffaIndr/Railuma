@@ -172,7 +172,7 @@ class RailumaStore:
                 r = requests.get(
                     f"{SUPABASE_URL}/auth/v1/user",
                     headers=_headers(access_token),
-                    timeout=2.0,
+                    timeout=6.0,
                 )
                 if r.ok:
                     u = r.json()
@@ -229,7 +229,7 @@ class RailumaStore:
                 r = requests.get(
                     f"{SUPABASE_URL}/rest/v1/railuma_sessions?user_id=eq.{user_id}&select=*&order=pinned.desc,updated_at.desc",
                     headers=_headers(access_token),
-                    timeout=2.0,
+                    timeout=5.0,
                 )
                 if r.ok:
                     sessions = r.json()
@@ -240,7 +240,7 @@ class RailumaStore:
                         r_items = requests.get(
                             f"{SUPABASE_URL}/rest/v1/railuma_scan_items?session_id=in.({ids_str})&select=id,session_id,final_text,status,confidence,created_at&order=created_at.desc&limit=200",
                             headers=_headers(access_token),
-                            timeout=2.0,
+                            timeout=5.0,
                         )
                         items = r_items.json() if (r_items.ok and isinstance(r_items.json(), list)) else []
                     by_ses: dict[str, list] = {}
@@ -311,14 +311,14 @@ class RailumaStore:
                 r = requests.get(
                     f"{SUPABASE_URL}/rest/v1/railuma_sessions?id=eq.{session_id}&user_id=eq.{user_id}&select=*",
                     headers=_headers(access_token),
-                    timeout=2.0,
+                    timeout=5.0,
                 )
                 if r.ok and r.json():
                     ses = r.json()[0]
                     r_it = requests.get(
                         f"{SUPABASE_URL}/rest/v1/railuma_scan_items?session_id=eq.{session_id}&select=*&order=created_at.asc",
                         headers=_headers(access_token),
-                        timeout=2.0,
+                        timeout=5.0,
                     )
                     items = r_it.json() if r_it.ok else []
                     if items:
@@ -326,7 +326,7 @@ class RailumaStore:
                         r_rev = requests.get(
                             f"{SUPABASE_URL}/rest/v1/railuma_revisions?item_id=in.({ids_str})&select=*&order=revision_number.asc",
                             headers=_headers(access_token),
-                            timeout=2.0,
+                            timeout=5.0,
                         )
                         revs = r_rev.json() if r_rev.ok else []
                         by_item: dict[str, list] = {}
@@ -368,10 +368,15 @@ class RailumaStore:
                     f"{SUPABASE_URL}/rest/v1/railuma_sessions?id=eq.{session_id}&user_id=eq.{user_id}",
                     headers=_headers(access_token),
                     json=patch,
-                    timeout=2.0,
+                    timeout=5.0,
                 )
                 if r.ok and r.json():
                     return r.json()[0]
+                elif r.ok:
+                    # Supabase return 204 or representation empty, query back
+                    return {"id": session_id, "user_id": user_id, **patch}
+            except Exception:  # noqa: BLE001
+                pass
             except Exception:  # noqa: BLE001
                 pass
 

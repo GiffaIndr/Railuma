@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Download, FileText, Mic, MicOff, Trash2, TriangleAlert, Volume2 } from "lucide-react";
+import { Check, Copy, Download, FileText, Mic, MicOff, Trash2, TriangleAlert, Volume2 } from "lucide-react";
 import { useA11y } from "../context/useA11y";
 import { exportToPDF, exportToTXT } from "../utils/exporter";
 import { speakText } from "../utils/speech";
@@ -12,7 +12,22 @@ export default function VoiceTranslator() {
   const [format, setFormat] = useState("normal");
   const [micError, setMicError] = useState("");
   const [pdfBlocked, setPdfBlocked] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(null);
   const recRef = useRef(null);
+
+  const triggerCopy = (key, textToCopy, msg = "Braille disalin ke papan klip.") => {
+    if (!textToCopy) return;
+    try {
+      navigator.clipboard?.writeText(textToCopy);
+    } catch {
+      // fallback
+    }
+    setCopiedKey(key);
+    announce(msg);
+    setTimeout(() => {
+      setCopiedKey((curr) => (curr === key ? null : curr));
+    }, 2000);
+  };
 
   const isReglet = format === "reglet";
   const braille = textToBraille(text);
@@ -239,7 +254,20 @@ export default function VoiceTranslator() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={!hasText}
+            onClick={() => triggerCopy("braille-txt", shown, "Braille disalin ke papan klip.")}
+          >
+            {copiedKey === "braille-txt" ? (
+              <Check size={18} className="text-emerald-500" aria-hidden="true" />
+            ) : (
+              <Copy size={18} aria-hidden="true" />
+            )}
+            <span>{copiedKey === "braille-txt" ? "Tersalin!" : "Salin Braille"}</span>
+          </button>
           <button
             type="button"
             className="btn btn-primary"
@@ -247,7 +275,7 @@ export default function VoiceTranslator() {
             onClick={savePdf}
           >
             <Download size={18} aria-hidden="true" />
-            <span>Simpan sebagai PDF</span>
+            <span>Simpan PDF</span>
           </button>
           <button
             type="button"
@@ -262,7 +290,7 @@ export default function VoiceTranslator() {
             }}
           >
             <FileText size={18} aria-hidden="true" />
-            <span>Simpan sebagai TXT</span>
+            <span>Simpan TXT</span>
           </button>
         </div>
 

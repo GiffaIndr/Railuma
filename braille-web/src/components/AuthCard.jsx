@@ -85,8 +85,8 @@ export default function AuthCard({
     try {
       const res =
         mode === "register"
-          ? await registerUser({ name: name.trim(), email: trimmedEmail, password })
-          : await loginUser({ email: trimmedEmail, password });
+          ? await registerUser({ name: name.trim(), email: trimmedEmail, password, remember: rememberMe })
+          : await loginUser({ email: trimmedEmail, password, remember: rememberMe });
 
       const user = res.user;
       announce(

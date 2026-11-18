@@ -79,9 +79,9 @@ const APP_NAV_ITEMS = [
   },
   {
     id: "konversi",
-    label: "Suara & Reglet",
-    title: "Konversi Suara & Reglet",
-    hint: "Ubah teks atau dikte suara menjadi titik Braille & Reglet",
+    label: "Teks/Suara ke Braille",
+    title: "Penerjemah Teks & Suara ke Braille",
+    hint: "Ketik teks atau gunakan dikte suara untuk mencetak Braille dan simulasi tusuk Reglet",
     Icon: Mic,
   },
   {
@@ -1066,11 +1066,10 @@ function Shell() {
                       onChange={(e) => setVoiceOn(e.target.checked)}
                     />
                     <span>
-                      <strong>Suara pengumuman bawaan (TTS)</strong>
+                      <strong>Bacakan Hasil Pindai &amp; Notifikasi Otomatis (Suara Bawaan)</strong>
                       <br />
                       <span className="text-[0.86rem] text-muted-theme">
-                        Matikan bila Anda sudah menggunakan pembaca layar
-                        seperti NVDA atau VoiceOver.
+                        Aplikasi otomatis membacakan teks hasil pindai dan konfirmasi tindakan dalam bahasa Indonesia lewat sintesis suara browser. Nonaktifkan opsi ini jika Anda lebih menyukai suasana hening atau sudah memakai software pembaca layar khusus (seperti NVDA atau TalkBack).
                       </span>
                     </span>
                   </label>

@@ -288,6 +288,22 @@ export default function BrailleScanner({
   const [editingText, setEditingText] = useState("");
   const [editingNote, setEditingNote] = useState("");
   const [savingRevision, setSavingRevision] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(null);
+  const sessionCacheRef = useRef(new Map());
+
+  const triggerCopy = useCallback((key, textToCopy, msg = "Teks disalin ke papan klip.") => {
+    if (!textToCopy) return;
+    try {
+      navigator.clipboard?.writeText(textToCopy);
+    } catch {
+      // abaikan jika diblokir
+    }
+    setCopiedKey(key);
+    announce(msg);
+    setTimeout(() => {
+      setCopiedKey((curr) => (curr === key ? null : curr));
+    }, 2000);
+  }, [announce]);
 
   const overlayCanvasRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -305,11 +321,7 @@ export default function BrailleScanner({
     async (selectId = null) => {
       try {
         const res = await listSessions();
-        let daftar = res.sessions || [];
-        if (daftar.length === 0) {
-          const baru = await createSession("Sesi 001 · Catatan Braille");
-          daftar = [baru];
-        }
+        const daftar = res.sessions || [];
         setSessions(daftar);
         try {
           localStorage.setItem("railuma_cached_sessions", JSON.stringify(daftar));
@@ -324,10 +336,13 @@ export default function BrailleScanner({
             return null;
           }
         })();
-        const targetId = selectId || (savedActive && daftar.some((d) => d.id === savedActive) ? savedActive : null) || (activeSessionId && daftar.some((d) => d.id === activeSessionId) ? activeSessionId : null) || daftar[0]?.id;
-        if (targetId) {
-          setActiveSessionId(targetId);
-        }
+        const targetId =
+          selectId ||
+          (savedActive && daftar.some((d) => d.id === savedActive) ? savedActive : null) ||
+          (activeSessionId && daftar.some((d) => d.id === activeSessionId) ? activeSessionId : null) ||
+          daftar[0]?.id ||
+          null;
+        setActiveSessionId(targetId);
       } catch (err) {
         console.error("Gagal mengambil sesi dari server:", err);
         if (err?.status === 401 && onAuthExpired) {
@@ -338,37 +353,44 @@ export default function BrailleScanner({
           const cached = localStorage.getItem("railuma_cached_sessions");
           if (cached) {
             const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
+            if (Array.isArray(parsed)) {
               setSessions(parsed);
               setSessionsState("ready");
-              setActiveSessionId(selectId || activeSessionId || parsed[0]?.id);
+              setActiveSessionId(selectId || activeSessionId || parsed[0]?.id || null);
               return;
             }
           }
         } catch {
           // abaikan
         }
-        const fallbackSessions = [
-          {
-            id: "sesi-lokal-1",
-            title: "Sesi 001 · Catatan Braille",
-            last_preview: "Siap digunakan. Sambungkan kamera atau unggah foto untuk membaca.",
-            scan_count: 0,
-            pinned: false,
-          },
-        ];
-        setSessions(fallbackSessions);
+        setSessions([]);
         setSessionsState("ready");
-        setActiveSessionId(fallbackSessions[0].id);
       }
     },
     [activeSessionId, onAuthExpired],
   );
 
   const loadActiveSessionDetail = useCallback(async (id) => {
-    if (!id) return;
+    if (!id) {
+      setActiveSession(null);
+      setSelectedItem(null);
+      return;
+    }
+    // Optimistic cache hit
+    if (sessionCacheRef.current.has(id)) {
+      const cached = sessionCacheRef.current.get(id);
+      setActiveSession(cached);
+      const items = cached.items || [];
+      if (items.length > 0) {
+        const last = items[items.length - 1];
+        setSelectedItem(last);
+        setEditingText(last.final_text || "");
+        setEditingNote(last.notes || "");
+      }
+    }
     try {
       const detail = await getSessionDetail(id);
+      sessionCacheRef.current.set(id, detail);
       setActiveSession(detail);
       const items = detail.items || [];
       if (items.length > 0) {
@@ -396,12 +418,7 @@ export default function BrailleScanner({
     listSessions()
       .then(async (res) => {
         if (!active) return;
-        let daftar = res.sessions || [];
-        if (daftar.length === 0) {
-          const baru = await createSession("Sesi 001 · Catatan Braille");
-          daftar = [baru];
-        }
-        if (!active) return;
+        const daftar = res.sessions || [];
         setSessions(daftar);
         try {
           localStorage.setItem("railuma_cached_sessions", JSON.stringify(daftar));
@@ -421,9 +438,7 @@ export default function BrailleScanner({
           : (activeSessionId && daftar.some((d) => d.id === activeSessionId))
             ? activeSessionId
             : (daftar[0]?.id || null);
-        if (target) {
-          setActiveSessionId(target);
-        }
+        setActiveSessionId(target);
       })
       .catch((err) => {
         if (!active) return;
@@ -436,7 +451,7 @@ export default function BrailleScanner({
           const cached = localStorage.getItem("railuma_cached_sessions");
           if (cached) {
             const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
+            if (Array.isArray(parsed)) {
               setSessions(parsed);
               setSessionsState("ready");
               if (parsed[0]?.id) setActiveSessionId(parsed[0].id);
@@ -446,18 +461,8 @@ export default function BrailleScanner({
         } catch {
           // abaikan
         }
-        const fallbackSessions = [
-          {
-            id: "sesi-lokal-1",
-            title: "Sesi 001 · Catatan Braille",
-            last_preview: "Siap digunakan. Sambungkan kamera atau unggah foto untuk membaca.",
-            scan_count: 0,
-            pinned: false,
-          },
-        ];
-        setSessions(fallbackSessions);
+        setSessions([]);
         setSessionsState("ready");
-        setActiveSessionId(fallbackSessions[0].id);
       });
     return () => {
       active = false;
@@ -987,14 +992,19 @@ export default function BrailleScanner({
   };
 
   const handleTogglePin = async (ses) => {
+    const nextPinned = !ses.pinned;
+    // Optimistic instant re-sort: pinned on top
+    setSessions((prev) => {
+      const updated = prev.map((s) => (s.id === ses.id ? { ...s, pinned: nextPinned } : s));
+      return [...updated].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+    });
+    announce(nextPinned ? "Sesi disematkan di atas." : "Semat sesi dilepas.");
+    toast.info(nextPinned ? "Sesi disematkan di atas." : "Semat sesi dilepas.");
+
     try {
-      await updateSession(ses.id, { pinned: !ses.pinned });
-      await loadSessionsList(activeSessionId, false);
-      announce(ses.pinned ? "Semat sesi dilepas." : "Sesi disematkan di atas.");
-      toast.info(ses.pinned ? "Semat sesi dilepas." : "Sesi disematkan di atas.");
+      await updateSession(ses.id, { pinned: nextPinned });
     } catch (err) {
-      console.error(err);
-      toast.error("Gagal mengubah status sematan sesi.");
+      console.warn("Sinkronisasi status semat ke server tertunda:", err);
     }
   };
 
@@ -1003,36 +1013,79 @@ export default function BrailleScanner({
       setRenamingId(null);
       return;
     }
+    const updatedTitle = renameText.trim();
+    setSessions((prev) =>
+      prev.map((s) => (s.id === sesId ? { ...s, title: updatedTitle } : s)),
+    );
+    setRenamingId(null);
+    announce("Nama sesi diperbarui.");
+    toast.success("Nama sesi berhasil diperbarui.");
+
     try {
-      await updateSession(sesId, { title: renameText.trim() });
-      setRenamingId(null);
-      await loadSessionsList(activeSessionId, false);
+      await updateSession(sesId, { title: updatedTitle });
       if (sesId === activeSessionId) await loadActiveSessionDetail(sesId);
-      announce("Nama sesi diperbarui.");
-      toast.success("Nama sesi berhasil diperbarui.");
     } catch (err) {
       console.error(err);
-      toast.error("Gagal mengubah nama sesi.");
+      toast.error("Gagal mengubah nama sesi di server.");
     }
   };
 
   const handleDeleteSession = async (ses) => {
     const nextList = sessions.filter((x) => x.id !== ses.id);
     setSessions(nextList);
+    try {
+      localStorage.setItem("railuma_cached_sessions", JSON.stringify(nextList));
+    } catch {
+      // abaikan
+    }
     if (activeSessionId === ses.id) {
       const nextId = nextList[0]?.id || null;
       setActiveSessionId(nextId);
+      if (!nextId) {
+        setActiveSession(null);
+        setSelectedItem(null);
+      }
     }
-    announce(`Sesi ${ses.title} dihapus.`);
+    announce(`Sesi "${ses.title}" dihapus.`);
     toast.success(`Sesi "${ses.title}" berhasil dihapus.`);
 
     try {
       await deleteSession(ses.id);
-      if (!nextList[0]?.id) await loadSessionsList();
     } catch (err) {
       console.error(err);
       toast.error("Gagal menghapus sesi di server.");
-      loadSessionsList();
+    }
+  };
+
+  const handleApproveCell = async (cell) => {
+    if (!selectedItem) return;
+    const cells = [...(selectedItem.cells_json || [])];
+    const targetIdx = cells.findIndex((c) => c.id === cell.id);
+    if (targetIdx === -1) return;
+
+    cells[targetIdx] = {
+      ...cells[targetIdx],
+      flag: "ok",
+      conf: 1.0,
+      verified: true,
+    };
+
+    setSavingRevision(true);
+    try {
+      const res = await patchScanItem(selectedItem.id, {
+        final_text: editingText || selectedItem.final_text,
+        notes: editingNote,
+        cells_json: cells,
+      });
+      const updatedItem = res?.item || { ...selectedItem, cells_json: cells };
+      setSelectedItem(updatedItem);
+      announce(`Huruf "${cell.symbol}" telah disetujui.`);
+      toast.success(`Huruf "${cell.symbol}" disetujui.`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Gagal menyimpan persetujuan huruf.");
+    } finally {
+      setSavingRevision(false);
     }
   };
 
@@ -1471,98 +1524,109 @@ export default function BrailleScanner({
           </div>
 
           <ul className="m-0 flex flex-1 list-none flex-col gap-2.5 overflow-y-auto p-0 pr-1">
-            {filteredSessions.map((ses, idx) => {
-              const isSelected = ses.id === activeSessionId;
-              return (
-                <li
-                  key={ses.id}
-                  className={`rounded-[16px] border p-3.5 transition-colors ${
-                    isSelected
-                      ? "border-[var(--primary)] bg-[var(--surface-sunken)]"
-                      : "border-[var(--border-subtle)] bg-[var(--surface)]"
-                  }`}
-                >
-                  {renamingId === ses.id ? (
-                    <div className="flex flex-col gap-2">
-                      <label htmlFor={`rename-${ses.id}`} className="sr-only">
-                        Nama sesi baru
-                      </label>
-                      <input
-                        id={`rename-${ses.id}`}
-                        type="text"
-                        value={renameText}
-                        onChange={(e) => setRenameText(e.target.value)}
-                        className="field !min-h-[38px] !py-1 !text-[0.86rem]"
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-sm flex-1"
-                          onClick={() => handleSaveRename(ses.id)}
-                        >
-                          Simpan
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => setRenamingId(null)}
-                        >
-                          Batal
-                        </button>
+            {filteredSessions.length === 0 ? (
+              <li className="p-4 text-center text-xs text-muted-theme">
+                {sessions.length === 0
+                  ? "Belum ada sesi tersimpan. Klik 'Sesi Baru' di atas untuk membuat sesi."
+                  : "Tidak ada sesi yang cocok dengan kata kunci pencarian."}
+              </li>
+            ) : (
+              filteredSessions.map((ses, idx) => {
+                const isSelected = ses.id === activeSessionId;
+                return (
+                  <li
+                    key={ses.id}
+                    onClick={() => setActiveSessionId(ses.id)}
+                    className={`rounded-[16px] border p-3.5 transition-all cursor-pointer ${
+                      isSelected
+                        ? "border-[var(--primary)] bg-[var(--surface-sunken)] shadow-sm ring-1 ring-[var(--primary)]"
+                        : "border-[var(--border-subtle)] bg-[var(--surface)] hover:border-[var(--border-strong)] hover:bg-[var(--surface-sunken)]/60"
+                    }`}
+                  >
+                    {renamingId === ses.id ? (
+                      <div className="flex flex-col gap-2" onClick={(e) => e.stopPropagation()}>
+                        <label htmlFor={`rename-${ses.id}`} className="sr-only">
+                          Nama sesi baru
+                        </label>
+                        <input
+                          id={`rename-${ses.id}`}
+                          type="text"
+                          value={renameText}
+                          onChange={(e) => setRenameText(e.target.value)}
+                          className="field !min-h-[38px] !py-1 !text-[0.86rem]"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm flex-1"
+                            onClick={() => handleSaveRename(ses.id)}
+                          >
+                            Simpan
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => setRenamingId(null)}
+                          >
+                            Batal
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-1.5">
-                      <div className="flex items-center justify-between gap-2 text-[0.76rem] font-semibold text-muted-theme">
-                        <span>Sesi #{idx + 1}</span>
-                        <span>{ses.scan_count ?? 0} tangkapan</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setActiveSessionId(ses.id)}
-                        className="border-0 bg-transparent p-0 text-left text-[0.96rem] font-bold text-[var(--text)]"
-                      >
-                        {ses.pinned ? "★ " : ""}
-                        {ses.title}
-                      </button>
-                      <p className="m-0 line-clamp-2 text-[0.83rem] text-muted-theme">
-                        {ses.last_preview || "Belum ada hasil pindai."}
-                      </p>
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                        <button
-                          type="button"
-                          className="btn btn-secondary !min-h-[32px] !px-2.5 !py-1 !text-[0.76rem]"
-                          onClick={() => handleTogglePin(ses)}
-                        >
-                          <Pin size={13} aria-hidden="true" />
-                          <span>{ses.pinned ? "Lepas" : "Semat"}</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary !min-h-[32px] !px-2.5 !py-1 !text-[0.76rem]"
-                          onClick={() => {
-                            setRenamingId(ses.id);
-                            setRenameText(ses.title);
-                          }}
-                        >
-                          Ubah Nama
-                        </button>
-                        {sessions.length > 1 && (
+                    ) : (
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center justify-between gap-2 text-[0.76rem] font-semibold text-muted-theme">
+                          <span>Sesi #{idx + 1}</span>
+                          <span>{ses.scan_count ?? 0} tangkapan</span>
+                        </div>
+                        <div className="text-left text-[0.96rem] font-bold text-[var(--text)]">
+                          {ses.pinned ? "★ " : ""}
+                          {ses.title}
+                        </div>
+                        <p className="m-0 line-clamp-2 text-[0.83rem] text-muted-theme">
+                          {ses.last_preview || "Belum ada hasil pindai."}
+                        </p>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                           <button
                             type="button"
                             className="btn btn-secondary !min-h-[32px] !px-2.5 !py-1 !text-[0.76rem]"
-                            onClick={() => handleDeleteSession(ses)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleTogglePin(ses);
+                            }}
+                          >
+                            <Pin size={13} aria-hidden="true" />
+                            <span>{ses.pinned ? "Lepas" : "Semat"}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary !min-h-[32px] !px-2.5 !py-1 !text-[0.76rem]"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRenamingId(ses.id);
+                              setRenameText(ses.title);
+                            }}
+                          >
+                            Ubah Nama
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary !min-h-[32px] !px-2.5 !py-1 !text-[0.76rem] hover:!border-red-400 hover:!text-red-500"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteSession(ses);
+                            }}
                             aria-label={`Hapus sesi ${ses.title}`}
+                            title="Hapus sesi ini"
                           >
                             <Trash2 size={13} aria-hidden="true" />
                           </button>
-                        )}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </li>
-              );
-            })}
+                    )}
+                  </li>
+                );
+              })
+            )}
           </ul>
         </aside>
 
@@ -1589,6 +1653,21 @@ export default function BrailleScanner({
               </button>
               {sessionItems.length > 0 && (
                 <>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      const gabungan = handleMergeSessionParagraph();
+                      triggerCopy("sesi-all", gabungan, "Seluruh teks sesi disalin.");
+                    }}
+                  >
+                    {copiedKey === "sesi-all" ? (
+                      <Check size={15} className="text-emerald-500" aria-hidden="true" />
+                    ) : (
+                      <Copy size={15} aria-hidden="true" />
+                    )}
+                    <span>{copiedKey === "sesi-all" ? "Tersalin!" : "Salin Semua"}</span>
+                  </button>
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
@@ -1723,13 +1802,14 @@ export default function BrailleScanner({
                       <button
                         type="button"
                         className="btn btn-secondary btn-sm"
-                        onClick={() => {
-                          navigator.clipboard?.writeText(it.final_text || "");
-                          announce("Teks disalin ke papan klip.");
-                        }}
+                        onClick={() => triggerCopy(`hist-${it.id}`, it.final_text || "", "Teks tangkapan disalin ke papan klip.")}
                       >
-                        <Copy size={15} aria-hidden="true" />
-                        <span>Salin</span>
+                        {copiedKey === `hist-${it.id}` ? (
+                          <Check size={15} className="text-emerald-500" aria-hidden="true" />
+                        ) : (
+                          <Copy size={15} aria-hidden="true" />
+                        )}
+                        <span>{copiedKey === `hist-${it.id}` ? "Tersalin!" : "Salin"}</span>
                       </button>
                       <button
                         type="button"
@@ -1770,21 +1850,9 @@ export default function BrailleScanner({
           Studio
         </button>
         <ChevronRight size={13} aria-hidden="true" className="opacity-45 flex-none" />
-        <button
-          type="button"
-          onClick={() => switchSubView("sesi")}
-          className="hover:text-[var(--text)] transition-colors border-0 bg-transparent p-0 cursor-pointer font-medium"
-        >
-          Riwayat Sesi
-        </button>
-        {activeSession?.title && (
-          <>
-            <ChevronRight size={13} aria-hidden="true" className="opacity-45 flex-none" />
-            <span className="font-semibold text-[var(--text)] truncate max-w-[200px] sm:max-w-[320px]">
-              {activeSession.title}
-            </span>
-          </>
-        )}
+        <span className="font-semibold text-[var(--text)]">
+          Ruang Scan
+        </span>
       </nav>
 
       {/* DECK KONTROL TERPADU RUANG SCAN */}
@@ -1792,9 +1860,9 @@ export default function BrailleScanner({
         <div className="flex flex-col gap-3.5">
           {/* Baris 1: Sesi Aktif & Indikator Sesi */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--border-subtle)]">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--surface-sunken)] text-[var(--primary)] font-bold text-[0.85rem] flex-none">
-                #
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <span className="text-[0.78rem] font-semibold text-muted-theme uppercase tracking-wider hidden sm:inline">
+                Sesi:
               </span>
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <label htmlFor="pilih-sesi-aktif" className="sr-only">
@@ -1807,18 +1875,13 @@ export default function BrailleScanner({
                   className="field !min-h-[38px] !max-w-[280px] sm:!max-w-[320px] flex-1 !py-1 !px-3 !text-[0.86rem] font-bold text-[var(--text)]"
                 >
                   {sessions.length === 0 ? (
-                    <option value="">Sesi 001 · Catatan Braille</option>
+                    <option value="">Belum ada sesi (Klik +)</option>
                   ) : (
-                    sessions.map((s, i) => {
-                      const displayTitle = s.title.toLowerCase().startsWith("sesi")
-                        ? s.title
-                        : `#${i + 1} · ${s.title}`;
-                      return (
-                        <option key={s.id} value={s.id}>
-                          {displayTitle}
-                        </option>
-                      );
-                    })
+                    sessions.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.title}
+                      </option>
+                    ))
                   )}
                 </select>
                 <button
@@ -2012,13 +2075,14 @@ export default function BrailleScanner({
                   type="button"
                   className="btn btn-secondary btn-sm"
                   disabled={!pairUrl}
-                  onClick={() => {
-                    navigator.clipboard?.writeText(pairUrl);
-                    announce("Tautan penyandingan HP disalin.");
-                  }}
+                  onClick={() => triggerCopy("pairUrl", pairUrl, "Tautan penyandingan HP disalin.")}
                 >
-                  <Copy size={15} aria-hidden="true" />
-                  <span>Salin Tautan</span>
+                  {copiedKey === "pairUrl" ? (
+                    <Check size={15} className="text-emerald-500" aria-hidden="true" />
+                  ) : (
+                    <Copy size={15} aria-hidden="true" />
+                  )}
+                  <span>{copiedKey === "pairUrl" ? "Tersalin!" : "Salin Tautan"}</span>
                 </button>
               </div>
             </div>
@@ -2036,12 +2100,9 @@ export default function BrailleScanner({
             {isCameraFullscreen ? (
               <div className="fullscreen-hud-top">
                 <div className="flex items-center gap-2">
-                  <span className="flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 text-[0.8rem] font-bold text-[#E6FF2E] backdrop-blur-md border border-white/15">
-                    <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-ping" />
-                    <span>Kamera Layar Penuh</span>
-                  </span>
-                  <span className="hidden sm:inline-flex rounded-full bg-black/60 px-2.5 py-1 text-[0.76rem] font-semibold text-white/80 backdrop-blur-md border border-white/10">
-                    Mode: {scanMode === "sentence" ? "Kalimat" : scanMode === "photo" ? "Foto Presisi" : "Live"}
+                  <span className="flex items-center gap-2 rounded-full bg-black/80 px-3.5 py-1.5 text-[0.82rem] font-bold text-white backdrop-blur-md border border-white/20 shadow-lg">
+                    <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-pulse" />
+                    <span>Mode: {scanMode === "sentence" ? "Kalimat" : scanMode === "photo" ? "Foto Presisi" : "Live"}</span>
                   </span>
                 </div>
 
@@ -2356,13 +2417,16 @@ export default function BrailleScanner({
                     if (!pairToken) {
                       startPhonePairing();
                     } else {
-                      navigator.clipboard?.writeText(pairUrl);
-                      announce("Tautan penyandingan HP disalin.");
+                      triggerCopy("pairBtn", pairUrl, "Tautan penyandingan HP disalin.");
                     }
                   }}
                 >
-                  <Copy size={16} aria-hidden="true" />
-                  <span>Salin Tautan HP</span>
+                  {copiedKey === "pairBtn" ? (
+                    <Check size={16} className="text-emerald-500" aria-hidden="true" />
+                  ) : (
+                    <Copy size={16} aria-hidden="true" />
+                  )}
+                  <span>{copiedKey === "pairBtn" ? "Tersalin!" : "Salin Tautan HP"}</span>
                 </button>
               </>
             ) : sourceMode === "upload" ? (
@@ -2411,7 +2475,7 @@ export default function BrailleScanner({
                       {status === "loading"
                         ? "Memproses..."
                         : scanMode === "live"
-                          ? "Tangkap & Simpan ke Sesi"
+                          ? "Tangkap Frame Ini"
                           : "Tangkap Foto Presisi"}
                     </span>
                   </button>
@@ -2579,13 +2643,14 @@ export default function BrailleScanner({
                     <button
                       type="button"
                       className="btn btn-secondary btn-sm flex-1"
-                      onClick={() => {
-                        navigator.clipboard?.writeText(selectedItem.final_text || "");
-                        announce("Teks hasil disalin.");
-                      }}
+                      onClick={() => triggerCopy("res-text", selectedItem.final_text || "", "Teks hasil disalin.")}
                     >
-                      <Copy size={15} aria-hidden="true" />
-                      <span>Salin</span>
+                      {copiedKey === "res-text" ? (
+                        <Check size={15} className="text-emerald-500" aria-hidden="true" />
+                      ) : (
+                        <Copy size={15} aria-hidden="true" />
+                      )}
+                      <span>{copiedKey === "res-text" ? "Tersalin!" : "Salin"}</span>
                     </button>
                     <button
                       type="button"
@@ -2617,13 +2682,14 @@ export default function BrailleScanner({
                   {/* Editor Revisi Langsung di Tempat */}
                   <div className="flex flex-col gap-2 border-t border-[var(--border-subtle)] pt-3">
                     <label htmlFor="editor-revisi-cepat" className="text-[0.86rem] font-semibold">
-                      Ubah Teks atau Catatan (Menyimpan Revisi Baru)
+                      Koreksi Manual (Opsional)
                     </label>
                     <textarea
                       id="editor-revisi-cepat"
                       rows={2}
                       value={editingText}
                       onChange={(e) => setEditingText(e.target.value)}
+                      placeholder="Ubah atau perbaiki teks bacaan di sini jika perlu..."
                       className="field font-semibold"
                     />
                     <div className="flex flex-wrap gap-2">
@@ -2644,7 +2710,7 @@ export default function BrailleScanner({
                         disabled={savingRevision}
                         onClick={handleSaveManualRevision}
                       >
-                        {savingRevision ? "Menyimpan..." : "Simpan Revisi"}
+                        {savingRevision ? "Menyimpan..." : "Simpan Hasil Perbaikan"}
                       </button>
                     </div>
                   </div>
@@ -2655,7 +2721,7 @@ export default function BrailleScanner({
               {rightTab === "alternatif" && (
                 <div className="flex flex-col gap-4">
                   <p className="m-0 text-[0.86rem] text-muted-theme">
-                    Pilih salah satu huruf di bawah untuk memeriksa pola 6-titik dan menggantinya
+                    Pilih salah satu huruf di bawah untuk memeriksa pola 6-titik, menyetujui huruf, atau menggantinya
                     dengan kandidat berjarak 1 titik:
                   </p>
 
@@ -2670,7 +2736,8 @@ export default function BrailleScanner({
                       aria-label="Daftar sel Braille terdeteksi"
                     >
                       {selectedCells.map((c, idx) => {
-                        const isLow = c.flag === "review" || (c.conf ?? 1) < 0.65;
+                        const isApproved = c.flag === "ok" || c.verified;
+                        const isLow = !isApproved && (c.flag === "review" || (c.conf ?? 1) < 0.65);
                         const isPicked = selectedCellIdx === idx;
                         return (
                           <button
@@ -2683,7 +2750,9 @@ export default function BrailleScanner({
                                 ? "border border-[var(--primary)] bg-[var(--primary)] text-[var(--on-primary)]"
                                 : isLow
                                   ? "border border-dashed border-[var(--peringatan-fg)] bg-[var(--peringatan-bg)] text-[var(--peringatan-fg)]"
-                                  : "border border-[var(--border-subtle)] bg-[var(--surface-sunken)] text-[var(--text)] hover:bg-[var(--awan-100)]"
+                                  : isApproved && c.verified
+                                    ? "border border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                    : "border border-[var(--border-subtle)] bg-[var(--surface-sunken)] text-[var(--text)] hover:bg-[var(--awan-100)]"
                             }`}
                           >
                             {c.symbol}
@@ -2729,6 +2798,19 @@ export default function BrailleScanner({
                         </div>
                       </div>
 
+                      {/* Tombol Verifikasi / Setujui Huruf Ini */}
+                      <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--border-subtle)]">
+                        <button
+                          type="button"
+                          disabled={savingRevision}
+                          onClick={() => handleApproveCell(activeCell)}
+                          className="btn btn-primary btn-sm flex items-center gap-1.5 !bg-emerald-600 hover:!bg-emerald-700 !text-white"
+                        >
+                          <Check size={14} aria-hidden="true" />
+                          <span>Setujui Huruf Ini ({activeCell.symbol}) Sudah Benar</span>
+                        </button>
+                      </div>
+
                       {activeCell.alternates?.length > 0 && (
                         <div className="border-t border-[var(--border-subtle)] pt-3">
                           <span className="mb-2 block text-[0.8rem] font-semibold text-muted-theme">
@@ -2759,8 +2841,7 @@ export default function BrailleScanner({
                     </div>
                   ) : (
                     <p className="m-0 text-[0.84rem] text-muted-theme">
-                      Pilih salah satu tombol huruf di atas untuk melihat diagram titik dan
-                      alternatifnya.
+                      Pilih salah satu tombol huruf di atas untuk melihat diagram titik, menyetujui, atau menggantinya.
                     </p>
                   )}
                 </div>
