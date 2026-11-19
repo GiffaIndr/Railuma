@@ -160,6 +160,11 @@ export default function BrailleScanner({
   const [livePreviewText, setLivePreviewText] = useState("");
   const [liveRawText, setLiveRawText] = useState("");
   const [liveConfirmed, setLiveConfirmed] = useState(false);
+  const [autoSaveStable, setAutoSaveStable] = useState(false);
+  const autoSaveStableRef = useRef(false);
+  const lastAutoSavedRef = useRef("");
+  const lastAutoSaveTimeRef = useRef(0);
+  const executeSingleOrFreezeScanRef = useRef(null);
   const [liveLatencyMs, setLiveLatencyMs] = useState(0);
   const [liveImageSize, setLiveImageSize] = useState({ w: 1280, h: 720 });
 
@@ -208,6 +213,10 @@ export default function BrailleScanner({
       navigator.vibrate(50);
     }
   }, [playShutterSound]);
+
+  useEffect(() => {
+    autoSaveStableRef.current = autoSaveStable;
+  }, [autoSaveStable]);
 
   useEffect(() => {
     return () => {
@@ -614,6 +623,17 @@ export default function BrailleScanner({
             setLivePreviewText(voted.text);
             setLiveRawText((data.raw_text || "").trim());
             setLiveConfirmed(voted.confirmed);
+
+            if (autoSaveStableRef.current && voted.confirmed && voted.text.length > 0) {
+              const now = Date.now();
+              const isDiff = voted.text !== lastAutoSavedRef.current;
+              const hasCooledDown = now - lastAutoSaveTimeRef.current > 4000;
+              if (isDiff && hasCooledDown) {
+                lastAutoSavedRef.current = voted.text;
+                lastAutoSaveTimeRef.current = now;
+                executeSingleOrFreezeScanRef.current?.(null, "webcam");
+              }
+            }
           }
         }
       } catch (e) {
@@ -809,6 +829,7 @@ export default function BrailleScanner({
       }
     }
   };
+  executeSingleOrFreezeScanRef.current = executeSingleOrFreezeScan;
 
   const executeSentenceBurstScan = async () => {
     if (!isCameraActive) {
@@ -2234,7 +2255,7 @@ export default function BrailleScanner({
                       {livePreviewText}
                     </span>
                     <span className="flex-none text-[0.78rem] font-semibold text-[#E6FF2E] tabular-nums">
-                      {livePolygons.length} sel {liveConfirmed ? "· stabil" : ""}
+                      {livePolygons.length} sel {liveConfirmed ? "· stabil" : ""}{autoSaveStable ? " · auto-simpan" : ""}
                     </span>
                   </div>
                 )}
@@ -2310,7 +2331,7 @@ export default function BrailleScanner({
                   >
                     <span className="truncate text-[0.95rem] font-bold">{livePreviewText}</span>
                     <span className="flex-none text-[0.8rem] font-semibold text-[#E6FF2E] tabular-nums">
-                      {livePolygons.length} sel {liveConfirmed ? "· stabil" : ""}
+                      {livePolygons.length} sel {liveConfirmed ? "· stabil" : ""}{autoSaveStable ? " · auto-simpan" : ""}
                     </span>
                   </div>
                 )}
@@ -2482,13 +2503,41 @@ export default function BrailleScanner({
                 )}
 
                 {scanMode === "live" && (
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => setLiveStreaming((v) => !v)}
-                  >
-                    {liveStreaming ? "Jeda Live" : "Lanjutkan Live"}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setLiveStreaming((v) => !v)}
+                    >
+                      {liveStreaming ? "Jeda Live" : "Lanjutkan Live"}
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn transition-colors ${
+                        autoSaveStable
+                          ? "btn-primary !bg-emerald-600 hover:!bg-emerald-700 !text-white"
+                          : "btn-secondary"
+                      }`}
+                      onClick={() => {
+                        const next = !autoSaveStable;
+                        setAutoSaveStable(next);
+                        announce(
+                          next
+                            ? "Auto-simpan aktif. Kertas yang diam dan stabil akan otomatis disimpan ke sesi."
+                            : "Auto-simpan dinonaktifkan.",
+                        );
+                        toast.info(
+                          next
+                            ? "Auto-Simpan aktif: Lembar stabil otomatis disimpan ke sesi."
+                            : "Auto-Simpan dinonaktifkan.",
+                        );
+                      }}
+                      title="Otomatis simpan ke sesi begitu kertas diam dan bacaan stabil (bebas sentuh)"
+                    >
+                      <Sparkles size={16} aria-hidden="true" />
+                      <span>{autoSaveStable ? "Auto-Simpan: On" : "Auto-Simpan Stabil"}</span>
+                    </button>
+                  </>
                 )}
 
                 <button type="button" className="btn btn-secondary" onClick={handleTurnOffCamera}>
