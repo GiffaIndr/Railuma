@@ -312,6 +312,7 @@ def api_create_scan(
     save_image: bool = Form(False),
     override_final_text: str | None = Form(None),
     override_raw_text: str | None = Form(None),
+    cells_json: str | None = Form(None),
     auth: dict = Depends(require_auth),
 ):
     data = np.frombuffer(file.file.read(), np.uint8)
@@ -332,9 +333,18 @@ def api_create_scan(
     final_txt = override_final_text if isinstance(override_final_text, str) else hasil["final_text"]
     raw_txt = override_raw_text if isinstance(override_raw_text, str) else hasil["raw_text"]
 
+    cells_data = hasil["cells"]
+    if cells_json:
+        try:
+            parsed = json.loads(cells_json)
+            if isinstance(parsed, list):
+                cells_data = parsed
+        except Exception:
+            pass
+
     perlu_tinjau = (
         hasil["mean_conf"] < 0.72
-        or any(c.get("flag") == "review" for c in hasil["cells"])
+        or any(c.get("flag") == "review" for c in cells_data)
         or any(w.get("ragu") for row in hasil["words"] for w in row)
     )
     status_item = "needs_review" if (perlu_tinjau and final_txt.strip()) else "done"
@@ -359,12 +369,12 @@ def api_create_scan(
             "confidence": hasil["mean_conf"],
             "raw_text": raw_txt,
             "final_text": final_txt,
-            "cell_count": hasil["n_cells"],
+            "cell_count": len(cells_data) if cells_json else hasil["n_cells"],
             "image_url": thumb_url,
             "image_width": img.shape[1],
             "image_height": img.shape[0],
             "words_json": hasil["words"],
-            "cells_json": hasil["cells"],
+            "cells_json": cells_data,
         },
         access_token=auth["token"],
     )

@@ -295,6 +295,7 @@ export const createSessionScan = async (
     checkBlur = true,
     overrideFinalText = null,
     overrideRawText = null,
+    cellsJson = null,
   } = {},
 ) => {
   const formData = new FormData();
@@ -306,6 +307,9 @@ export const createSessionScan = async (
   formData.append("save_image", isSaveImageOn() ? "true" : "false");
   if (overrideFinalText !== null) formData.append("override_final_text", overrideFinalText);
   if (overrideRawText !== null) formData.append("override_raw_text", overrideRawText);
+  if (cellsJson !== null) {
+    formData.append("cells_json", typeof cellsJson === "string" ? cellsJson : JSON.stringify(cellsJson));
+  }
 
   return fetchJson(`${API_URL}/api/v1/sessions/${encodeURIComponent(sessionId)}/scans`, {
     method: "POST",

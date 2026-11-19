@@ -39,6 +39,7 @@ import {
   isDatasetConsentOn,
   listSessions,
   patchScanItem,
+  translateBrailleImage,
   updateSession,
 } from "../services/api";
 import { measureSharpness, sharpnessLabel, BLUR_MIN } from "../utils/blur";
@@ -160,10 +161,6 @@ export default function BrailleScanner({
   const [livePreviewText, setLivePreviewText] = useState("");
   const [liveRawText, setLiveRawText] = useState("");
   const [liveConfirmed, setLiveConfirmed] = useState(false);
-  const [autoSaveStable, setAutoSaveStable] = useState(false);
-  const autoSaveStableRef = useRef(false);
-  const lastAutoSavedRef = useRef("");
-  const lastAutoSaveTimeRef = useRef(0);
   const executeSingleOrFreezeScanRef = useRef(null);
   const [liveLatencyMs, setLiveLatencyMs] = useState(0);
   const [liveImageSize, setLiveImageSize] = useState({ w: 1280, h: 720 });
@@ -213,10 +210,6 @@ export default function BrailleScanner({
       navigator.vibrate(50);
     }
   }, [playShutterSound]);
-
-  useEffect(() => {
-    autoSaveStableRef.current = autoSaveStable;
-  }, [autoSaveStable]);
 
   useEffect(() => {
     return () => {
@@ -623,17 +616,6 @@ export default function BrailleScanner({
             setLivePreviewText(voted.text);
             setLiveRawText((data.raw_text || "").trim());
             setLiveConfirmed(voted.confirmed);
-
-            if (autoSaveStableRef.current && voted.confirmed && voted.text.length > 0) {
-              const now = Date.now();
-              const isDiff = voted.text !== lastAutoSavedRef.current;
-              const hasCooledDown = now - lastAutoSaveTimeRef.current > 4000;
-              if (isDiff && hasCooledDown) {
-                lastAutoSavedRef.current = voted.text;
-                lastAutoSaveTimeRef.current = now;
-                executeSingleOrFreezeScanRef.current?.(null, "webcam");
-              }
-            }
           }
         }
       } catch (e) {
@@ -749,16 +731,10 @@ export default function BrailleScanner({
       message: "Memproses foto Braille...",
       detail: "Menganalisis kisi titik dan mencocokkan kata...",
     });
-    announce("Memproses dan menyimpan pindai ke sesi...");
+    announce("Menganalisis foto Braille...");
 
     try {
-      const res = await createSessionScan(activeSessionId, blob, {
-        mode: scanMode,
-        source: customSource,
-        checkBlur: false,
-        overrideFinalText: scanMode === "live" && livePreviewText ? livePreviewText : null,
-        overrideRawText: scanMode === "live" && liveRawText ? liveRawText : null,
-      });
+      const res = await translateBrailleImage(blob, false);
 
       if (res.status === "blurry") {
         setSharp(res.sharpness ?? 0);
@@ -776,11 +752,17 @@ export default function BrailleScanner({
         return;
       }
 
-      const item = res.item;
-      setQualityInfo(res.quality || null);
-      setSharp(item?.sharpness ?? 0);
+      if (res.status === "error") {
+        throw new Error(res.message || "Gagal memproses gambar Braille.");
+      }
 
-      if (!item?.final_text?.trim()) {
+      setQualityInfo(res.quality || null);
+      setSharp(res.sharpness ?? 0);
+
+      const finalTxt = scanMode === "live" && livePreviewText ? livePreviewText : (res.final_text || "").trim();
+      const rawTxt = scanMode === "live" && liveRawText ? liveRawText : (res.raw_text || finalTxt).trim();
+
+      if (!finalTxt) {
         setStatus("empty");
         announce("Belum ada Braille terbaca. Coba lebih dekat atau ubah arah cahaya.");
         setFullscreenFeedback({
@@ -791,30 +773,55 @@ export default function BrailleScanner({
         if (typeof navigator !== "undefined" && navigator.vibrate) {
           navigator.vibrate([80, 50, 80]);
         }
-      } else {
-        setStatus("done");
-        const hasReview =
-          item.status === "needs_review" ||
-          (item.cells_json || []).some((c) => c.flag === "review" || (c.conf ?? 1) < 0.65);
-        setRightTab(scanMode === "sentence" && hasReview ? "alternatif" : "hasil");
-        announce(`Tersimpan di sesi: ${item.final_text}`);
-
-        setFullscreenFeedback({
-          type: "done",
-          message: `Berhasil: "${item.final_text}"`,
-          detail: `${item.cells_json?.length || 0} sel terdeteksi · Ketajaman ${item.sharpness ?? sharp}`,
-        });
-        if (typeof navigator !== "undefined" && navigator.vibrate) {
-          navigator.vibrate([40, 60, 40]);
-        }
-        clearTimeout(feedbackTimerRef.current);
-        feedbackTimerRef.current = setTimeout(() => {
-          setFullscreenFeedback(null);
-        }, 5000);
+        return;
       }
 
-      await loadActiveSessionDetail(activeSessionId);
-      await loadSessionsList(activeSessionId, false);
+      setStatus("done");
+      const cellsData = res.cells || [];
+      const wordsData = res.words || [];
+      const hasReview =
+        (res.mean_conf || 1) < 0.72 ||
+        cellsData.some((c) => c.flag === "review" || (c.conf ?? 1) < 0.65) ||
+        wordsData.some((row) => row.some((w) => w.ragu));
+
+      const draftItem = {
+        id: `draft-${Date.now()}`,
+        isDraft: true,
+        blob,
+        mode: scanMode,
+        source: customSource,
+        status: hasReview ? "needs_review" : "done",
+        confidence: res.mean_conf ?? 0.85,
+        cell_count: res.n_cells ?? cellsData.length,
+        raw_text: rawTxt,
+        final_text: finalTxt,
+        cells_json: cellsData,
+        words_json: wordsData,
+        sharpness: res.sharpness ?? sharp,
+        quality: res.quality || null,
+        created_at: new Date().toISOString(),
+      };
+
+      setSelectedItem(draftItem);
+      setEditingText(draftItem.final_text);
+      setEditingNote("");
+      setSelectedCellIdx(0);
+      setRightTab(scanMode === "sentence" && hasReview ? "alternatif" : "hasil");
+      announce(`Tangkapan terbaca: "${draftItem.final_text}". Silakan periksa di panel kanan lalu simpan ke sesi.`);
+      toast.success("Tangkapan selesai! Tinjau di panel kanan lalu simpan.");
+
+      setFullscreenFeedback({
+        type: "done",
+        message: `Tangkapan Siap: "${draftItem.final_text}"`,
+        detail: "Hasil belum disimpan. Periksa di panel kanan lalu klik Simpan ke Sesi.",
+      });
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        navigator.vibrate([40, 60, 40]);
+      }
+      clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = setTimeout(() => {
+        setFullscreenFeedback(null);
+      }, 5000);
     } catch (err) {
       console.error(err);
       setStatus("error");
@@ -1078,6 +1085,63 @@ export default function BrailleScanner({
     }
   };
 
+  const handleCommitDraftToSession = async () => {
+    if (!selectedItem || !selectedItem.isDraft) return;
+    if (!activeSessionId) {
+      toast.error("Pilih atau buat sesi aktif terlebih dahulu untuk menyimpan.");
+      return;
+    }
+
+    setSavingRevision(true);
+    announce("Menyimpan hasil tangkapan ke sesi aktif...");
+
+    try {
+      const res = await createSessionScan(activeSessionId, selectedItem.blob, {
+        mode: selectedItem.mode,
+        source: selectedItem.source,
+        checkBlur: false,
+        overrideFinalText: editingText || selectedItem.final_text,
+        overrideRawText: selectedItem.raw_text,
+        cellsJson: selectedItem.cells_json,
+      });
+
+      const savedItem = res?.item || {
+        ...selectedItem,
+        id: res?.id || `item-${Date.now()}`,
+        final_text: editingText || selectedItem.final_text,
+      };
+      delete savedItem.isDraft;
+      delete savedItem.blob;
+
+      setSelectedItem(savedItem);
+      setEditingText(savedItem.final_text || "");
+      setEditingNote(savedItem.notes || "");
+
+      await loadActiveSessionDetail(activeSessionId);
+      await loadSessionsList(activeSessionId, false);
+
+      announce(`Berhasil disimpan ke sesi: ${savedItem.final_text}`);
+      toast.success("Berhasil disimpan ke sesi aktif!");
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || "Gagal menyimpan tangkapan ke sesi.");
+    } finally {
+      setSavingRevision(false);
+    }
+  };
+
+  const handleDiscardDraft = () => {
+    if (!selectedItem?.isDraft) return;
+    const items = activeSession?.items || [];
+    const last = items.length > 0 ? items[items.length - 1] : null;
+    setSelectedItem(last);
+    setEditingText(last?.final_text || "");
+    setEditingNote(last?.notes || "");
+    setSelectedCellIdx(0);
+    announce("Tangkapan dibatalkan. Tidak ada data yang tersimpan.");
+    toast.info("Tangkapan dibatalkan.");
+  };
+
   const handleApproveCell = async (cell) => {
     if (!selectedItem) return;
     const cells = [...(selectedItem.cells_json || [])];
@@ -1090,6 +1154,14 @@ export default function BrailleScanner({
       conf: 1.0,
       verified: true,
     };
+
+    if (selectedItem.isDraft) {
+      const updatedItem = { ...selectedItem, cells_json: cells };
+      setSelectedItem(updatedItem);
+      announce(`Huruf "${cell.symbol}" telah disetujui.`);
+      toast.success(`Huruf "${cell.symbol}" disetujui.`);
+      return;
+    }
 
     setSavingRevision(true);
     try {
@@ -1158,6 +1230,17 @@ export default function BrailleScanner({
     const updatedText = tokens.join("");
     setEditingText(updatedText);
 
+    if (selectedItem.isDraft) {
+      setSelectedItem({
+        ...selectedItem,
+        final_text: updatedText,
+        cells_json: cells,
+      });
+      announce(`Sel diubah dari ${oldSymbol} menjadi ${newSymbol}.`);
+      toast.success(`Huruf diganti ke "${newSymbol}".`);
+      return;
+    }
+
     setSavingRevision(true);
     try {
       const res = await patchScanItem(selectedItem.id, {
@@ -1188,6 +1271,16 @@ export default function BrailleScanner({
 
   const handleSaveManualRevision = async () => {
     if (!selectedItem) return;
+    if (selectedItem.isDraft) {
+      setSelectedItem({
+        ...selectedItem,
+        final_text: editingText,
+        notes: editingNote,
+      });
+      announce("Pratinjau teks tangkapan diperbarui.");
+      toast.success("Pratinjau teks diperbarui.");
+      return;
+    }
     setSavingRevision(true);
     try {
       const res = await patchScanItem(selectedItem.id, {
@@ -2255,7 +2348,7 @@ export default function BrailleScanner({
                       {livePreviewText}
                     </span>
                     <span className="flex-none text-[0.78rem] font-semibold text-[#E6FF2E] tabular-nums">
-                      {livePolygons.length} sel {liveConfirmed ? "· stabil" : ""}{autoSaveStable ? " · auto-simpan" : ""}
+                      {livePolygons.length} sel {liveConfirmed ? "· stabil" : ""}
                     </span>
                   </div>
                 )}
@@ -2331,7 +2424,7 @@ export default function BrailleScanner({
                   >
                     <span className="truncate text-[0.95rem] font-bold">{livePreviewText}</span>
                     <span className="flex-none text-[0.8rem] font-semibold text-[#E6FF2E] tabular-nums">
-                      {livePolygons.length} sel {liveConfirmed ? "· stabil" : ""}{autoSaveStable ? " · auto-simpan" : ""}
+                      {livePolygons.length} sel {liveConfirmed ? "· stabil" : ""}
                     </span>
                   </div>
                 )}
@@ -2503,41 +2596,13 @@ export default function BrailleScanner({
                 )}
 
                 {scanMode === "live" && (
-                  <>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={() => setLiveStreaming((v) => !v)}
-                    >
-                      {liveStreaming ? "Jeda Live" : "Lanjutkan Live"}
-                    </button>
-                    <button
-                      type="button"
-                      className={`btn transition-colors ${
-                        autoSaveStable
-                          ? "btn-primary !bg-emerald-600 hover:!bg-emerald-700 !text-white"
-                          : "btn-secondary"
-                      }`}
-                      onClick={() => {
-                        const next = !autoSaveStable;
-                        setAutoSaveStable(next);
-                        announce(
-                          next
-                            ? "Auto-simpan aktif. Kertas yang diam dan stabil akan otomatis disimpan ke sesi."
-                            : "Auto-simpan dinonaktifkan.",
-                        );
-                        toast.info(
-                          next
-                            ? "Auto-Simpan aktif: Lembar stabil otomatis disimpan ke sesi."
-                            : "Auto-Simpan dinonaktifkan.",
-                        );
-                      }}
-                      title="Otomatis simpan ke sesi begitu kertas diam dan bacaan stabil (bebas sentuh)"
-                    >
-                      <Sparkles size={16} aria-hidden="true" />
-                      <span>{autoSaveStable ? "Auto-Simpan: On" : "Auto-Simpan Stabil"}</span>
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setLiveStreaming((v) => !v)}
+                  >
+                    {liveStreaming ? "Jeda Live" : "Lanjutkan Live"}
+                  </button>
                 )}
 
                 <button type="button" className="btn btn-secondary" onClick={handleTurnOffCamera}>
@@ -2645,20 +2710,64 @@ export default function BrailleScanner({
               {/* TAB 1: HASIL BACAAN & AKSI CEPAT */}
               {rightTab === "hasil" && (
                 <div className="flex flex-col gap-4">
+                  {/* Banner Verifikasi Tangkapan Baru (Draft) */}
+                  {selectedItem.isDraft && (
+                    <div className="rounded-2xl border-2 border-[var(--primary)] bg-[var(--primary)]/10 p-4 text-[0.88rem] flex flex-col gap-2.5 shadow-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 font-bold text-[0.92rem]">
+                          <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse" />
+                          <span>Tangkapan Baru (Pratinjau)</span>
+                        </div>
+                        <span className="status-chip status-chip-review !text-[0.74rem]">
+                          Belum Masuk Sesi
+                        </span>
+                      </div>
+                      <p className="m-0 text-muted-theme text-[0.82rem] leading-relaxed">
+                        Data ini belum disimpan ke database sesi. Anda dapat memeriksa hasil teks, mengedit jika perlu, lalu klik tombol di bawah untuk menyimpan atau membuang.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          className="btn btn-primary flex-1 !bg-emerald-600 hover:!bg-emerald-700 !text-white font-bold"
+                          disabled={savingRevision}
+                          onClick={handleCommitDraftToSession}
+                        >
+                          <Check size={16} aria-hidden="true" />
+                          <span>{savingRevision ? "Menyimpan ke Sesi..." : "Simpan ke Sesi Ini"}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary flex-none text-rose-500 hover:text-rose-600 font-semibold"
+                          disabled={savingRevision}
+                          onClick={handleDiscardDraft}
+                        >
+                          <X size={16} aria-hidden="true" />
+                          <span>Buang / Batal</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="surface-subtle p-4">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[0.8rem] font-semibold text-muted-theme">
-                        Hasil Terjemahan Aktif
+                        {selectedItem.isDraft ? "Teks Hasil Tangkapan (Pratinjau)" : "Hasil Terjemahan Aktif"}
                       </span>
                       <span
                         className={`status-chip ${
-                          selectedItem.status === "needs_review"
+                          selectedItem.isDraft
                             ? "status-chip-review"
-                            : "status-chip-ok"
+                            : selectedItem.status === "needs_review"
+                              ? "status-chip-review"
+                              : "status-chip-ok"
                         }`}
                       >
-                        {selectedItem.status === "needs_review" ? "Perlu ditinjau" : "Yakin"} (
-                        {Math.round((selectedItem.confidence || 0) * 100)}%)
+                        {selectedItem.isDraft
+                          ? "Draft Belum Disimpan"
+                          : selectedItem.status === "needs_review"
+                            ? "Perlu ditinjau"
+                            : "Tersimpan di Sesi"}{" "}
+                        ({Math.round((selectedItem.confidence || 0) * 100)}%)
                       </span>
                     </div>
 
@@ -2731,7 +2840,7 @@ export default function BrailleScanner({
                   {/* Editor Revisi Langsung di Tempat */}
                   <div className="flex flex-col gap-2 border-t border-[var(--border-subtle)] pt-3">
                     <label htmlFor="editor-revisi-cepat" className="text-[0.86rem] font-semibold">
-                      Koreksi Manual (Opsional)
+                      {selectedItem.isDraft ? "Koreksi Teks Tangkapan Sebelum Disimpan" : "Koreksi Manual (Opsional)"}
                     </label>
                     <textarea
                       id="editor-revisi-cepat"
@@ -2753,14 +2862,26 @@ export default function BrailleScanner({
                         placeholder="Catatan opsional (mis. halaman buku)..."
                         className="field flex-1 !min-h-[38px] !py-1.5 !text-[0.84rem]"
                       />
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-sm"
-                        disabled={savingRevision}
-                        onClick={handleSaveManualRevision}
-                      >
-                        {savingRevision ? "Menyimpan..." : "Simpan Hasil Perbaikan"}
-                      </button>
+                      {selectedItem.isDraft ? (
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm !bg-emerald-600 hover:!bg-emerald-700 !text-white font-bold"
+                          disabled={savingRevision}
+                          onClick={handleCommitDraftToSession}
+                        >
+                          <Check size={15} aria-hidden="true" />
+                          <span>{savingRevision ? "Menyimpan..." : "Simpan ke Sesi Ini"}</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          disabled={savingRevision}
+                          onClick={handleSaveManualRevision}
+                        >
+                          {savingRevision ? "Menyimpan..." : "Simpan Hasil Perbaikan"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2892,6 +3013,34 @@ export default function BrailleScanner({
                     <p className="m-0 text-[0.84rem] text-muted-theme">
                       Pilih salah satu tombol huruf di atas untuk melihat diagram titik, menyetujui, atau menggantinya.
                     </p>
+                  )}
+                  {selectedItem.isDraft && (
+                    <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3.5 flex flex-wrap items-center justify-between gap-2.5">
+                      <div className="text-[0.82rem] text-emerald-800 dark:text-emerald-300">
+                        <strong className="block">Pratinjau Tangkapan</strong>
+                        <span>Selesai memeriksa sel? Simpan hasil ini ke sesi aktif.</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm !bg-emerald-600 hover:!bg-emerald-700 !text-white font-bold"
+                          disabled={savingRevision}
+                          onClick={handleCommitDraftToSession}
+                        >
+                          <Check size={14} aria-hidden="true" />
+                          <span>Simpan ke Sesi Ini</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm text-rose-500"
+                          disabled={savingRevision}
+                          onClick={handleDiscardDraft}
+                        >
+                          <X size={14} aria-hidden="true" />
+                          <span>Buang</span>
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}
