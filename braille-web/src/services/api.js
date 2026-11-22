@@ -32,6 +32,7 @@ export const CLAHE_KEY = "railuma-clahe";
 export const SAVE_IMAGE_KEY = "railuma-save-image";
 export const DATASET_CONSENT_KEY = "railuma-dataset-consent";
 export const AUTH_TOKEN_KEY = "railuma-auth-token";
+export const AUTH_REFRESH_KEY = "railuma-refresh-token";
 export const AUTH_USER_KEY = "railuma-auth-user";
 
 export const signInWithGoogle = async () => {
@@ -83,6 +84,14 @@ export const getAuthToken = () => {
   }
 };
 
+export const getRefreshToken = () => {
+  try {
+    return localStorage.getItem(AUTH_REFRESH_KEY) || sessionStorage.getItem(AUTH_REFRESH_KEY) || "";
+  } catch {
+    return "";
+  }
+};
+
 export const getSavedUser = () => {
   try {
     const raw = localStorage.getItem(AUTH_USER_KEY) || sessionStorage.getItem(AUTH_USER_KEY);
@@ -92,7 +101,7 @@ export const getSavedUser = () => {
   }
 };
 
-export const setAuthSession = (token, user, remember = true) => {
+export const setAuthSession = (token, user, remember = true, refreshToken = "") => {
   try {
     const primaryStorage = remember ? localStorage : sessionStorage;
     const secondaryStorage = remember ? sessionStorage : localStorage;
@@ -100,6 +109,10 @@ export const setAuthSession = (token, user, remember = true) => {
     if (token) {
       primaryStorage.setItem(AUTH_TOKEN_KEY, token);
       secondaryStorage.removeItem(AUTH_TOKEN_KEY);
+    }
+    if (refreshToken) {
+      primaryStorage.setItem(AUTH_REFRESH_KEY, refreshToken);
+      secondaryStorage.removeItem(AUTH_REFRESH_KEY);
     }
     if (user) {
       primaryStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
@@ -113,8 +126,10 @@ export const setAuthSession = (token, user, remember = true) => {
 export const clearAuthSession = () => {
   try {
     localStorage.removeItem(AUTH_TOKEN_KEY);
+    localStorage.removeItem(AUTH_REFRESH_KEY);
     localStorage.removeItem(AUTH_USER_KEY);
     sessionStorage.removeItem(AUTH_TOKEN_KEY);
+    sessionStorage.removeItem(AUTH_REFRESH_KEY);
     sessionStorage.removeItem(AUTH_USER_KEY);
   } catch {
     // abaikan
@@ -158,7 +173,7 @@ export const getWsBaseUrl = () => {
   return "ws://127.0.0.1:8000";
 };
 
-async function fetchJson(url, options = {}, timeoutMs = 35000) {
+async function fetchJson(url, options = {}, timeoutMs = 35000, isRetry = false) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const token = getAuthToken();
@@ -172,6 +187,34 @@ async function fetchJson(url, options = {}, timeoutMs = 35000) {
       headers,
       signal: controller.signal,
     });
+    if (response.status === 401 && !isRetry && !url.includes("/auth/login") && !url.includes("/auth/refresh")) {
+      const refreshToken = getRefreshToken();
+      if (refreshToken) {
+        try {
+          const refreshRes = await fetch(`${API_URL}/api/v1/auth/refresh`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ refresh_token: refreshToken }),
+          });
+          if (refreshRes.ok) {
+            const refreshed = await refreshRes.json();
+            if (refreshed.access_token) {
+              const isSessionOnly = Boolean(sessionStorage.getItem(AUTH_TOKEN_KEY));
+              setAuthSession(
+                refreshed.access_token,
+                refreshed.user || getSavedUser(),
+                !isSessionOnly,
+                refreshed.refresh_token || refreshToken,
+              );
+              const nextHeaders = { ...(options.headers || {}), Authorization: `Bearer ${refreshed.access_token}` };
+              return fetchJson(url, { ...options, headers: nextHeaders }, timeoutMs, true);
+            }
+          }
+        } catch {
+          // lanjut ke penanganan error normal
+        }
+      }
+    }
     if (!response.ok) {
       let detail = `Server merespons dengan status ${response.status}.`;
       try {
@@ -209,7 +252,7 @@ export const registerUser = async ({ name = "", email, password, remember = true
     body: JSON.stringify({ name, email, password }),
   }, 30000);
   if (res.access_token && res.user) {
-    setAuthSession(res.access_token, res.user, remember);
+    setAuthSession(res.access_token, res.user, remember, res.refresh_token || "");
   }
   return res;
 };
@@ -221,7 +264,7 @@ export const loginUser = async ({ email, password, remember = true }) => {
     body: JSON.stringify({ email, password }),
   }, 30000);
   if (res.access_token && res.user) {
-    setAuthSession(res.access_token, res.user, remember);
+    setAuthSession(res.access_token, res.user, remember, res.refresh_token || "");
   }
   return res;
 };
@@ -229,8 +272,8 @@ export const loginUser = async ({ email, password, remember = true }) => {
 export const fetchCurrentUser = async () => {
   const res = await fetchJson(`${API_URL}/api/v1/auth/me`, {}, 25000);
   if (res.user) {
-    const isLocal = Boolean(sessionStorage.getItem(AUTH_TOKEN_KEY));
-    setAuthSession(getAuthToken(), res.user, !isLocal);
+    const isSessionOnly = Boolean(sessionStorage.getItem(AUTH_TOKEN_KEY));
+    setAuthSession(getAuthToken(), res.user, !isSessionOnly, getRefreshToken());
   }
   return res.user;
 };

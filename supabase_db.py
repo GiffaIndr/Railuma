@@ -1,6 +1,8 @@
 """Autentikasi Supabase Auth & lapisan persistensi sesi per user_id (RLS-aware + fallback lokal)."""
 from __future__ import annotations
 
+import base64
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -9,6 +11,7 @@ import uuid
 from datetime import datetime, timezone
 
 import requests
+from requests.adapters import HTTPAdapter
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://rkcvkddbccpmhodryspm.supabase.co").rstrip("/")
 SUPABASE_OFFLINE = os.getenv("SUPABASE_OFFLINE", "0") == "1"
@@ -16,6 +19,39 @@ SUPABASE_KEY = os.getenv(
     "SUPABASE_KEY",
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJrY3ZrZGRiY2NwbWhvZHJ5c3BtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE2MTkyMjQsImV4cCI6MjEwNzE5NTIyNH0.vg1ZOQ9SBEBsRiKkDGsgZH-mocGVFcdyFuoFHaT0Ots",
 )
+
+# Reuse persistent TLS keep-alive connection pool to Supabase for <50ms queries
+HTTP = requests.Session()
+_adapter = HTTPAdapter(pool_connections=16, pool_maxsize=32, max_retries=1)
+HTTP.mount("https://", _adapter)
+HTTP.mount("http://", _adapter)
+_POOL = ThreadPoolExecutor(max_workers=8)
+_TOKEN_CACHE: dict[str, dict] = {}
+
+
+def _decode_supabase_jwt(token: str) -> dict | None:
+    """Ekstrak user_id & profil langsung dari payload JWT Supabase tanpa round-trip jaringan."""
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        payload_b64 = parts[1]
+        pad = "=" * ((4 - len(payload_b64) % 4) % 4)
+        raw = base64.urlsafe_b64decode(payload_b64 + pad)
+        data = json.loads(raw.decode("utf-8"))
+        uid = data.get("sub")
+        if not uid:
+            return None
+        meta = data.get("user_metadata") or {}
+        email = data.get("email") or ""
+        name = meta.get("name") or meta.get("full_name") or (email.split("@")[0] if email else "Pengguna")
+        return {
+            "id": uid,
+            "email": email,
+            "name": name,
+        }
+    except Exception:  # noqa: BLE001
+        return None
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOCAL_FALLBACK_PATH = os.path.join(BASE_DIR, "railuma_local_fallback.json")
@@ -73,7 +109,7 @@ class RailumaStore:
 
         if not SUPABASE_OFFLINE:
             try:
-                r = requests.post(
+                r = HTTP.post(
                     f"{SUPABASE_URL}/auth/v1/signup",
                     headers=_headers(),
                     json={
@@ -81,23 +117,27 @@ class RailumaStore:
                         "password": password,
                         "data": {"name": clean_name},
                     },
-                    timeout=3.0,
+                    timeout=5.0,
                 )
                 if r.status_code >= 400:
                     msg = r.json().get("msg") or r.json().get("error_description") or r.json().get("message") or "Pendaftaran gagal."
                     raise ValueError(msg)
                 body = r.json()
                 access_token = body.get("access_token")
+                refresh_token = body.get("refresh_token") or ""
                 user_obj = body.get("user") or body
                 if not access_token:
                     return self.login_user(clean_email, password)
+                user_dict = {
+                    "id": user_obj.get("id"),
+                    "email": user_obj.get("email", clean_email),
+                    "name": (user_obj.get("user_metadata") or {}).get("name") or clean_name,
+                }
+                _TOKEN_CACHE[access_token] = user_dict
                 return {
                     "access_token": access_token,
-                    "user": {
-                        "id": user_obj.get("id"),
-                        "email": user_obj.get("email", clean_email),
-                        "name": (user_obj.get("user_metadata") or {}).get("name") or clean_name,
-                    },
+                    "refresh_token": refresh_token,
+                    "user": user_dict,
                 }
             except ValueError:
                 raise
@@ -122,6 +162,7 @@ class RailumaStore:
         _simpan_lokal(db)
         return {
             "access_token": token,
+            "refresh_token": token,
             "user": {"id": user_id, "email": clean_email, "name": clean_name},
         }
 
@@ -129,24 +170,28 @@ class RailumaStore:
         clean_email = email.strip().lower()
         if not SUPABASE_OFFLINE:
             try:
-                r = requests.post(
+                r = HTTP.post(
                     f"{SUPABASE_URL}/auth/v1/token?grant_type=password",
                     headers=_headers(),
                     json={"email": clean_email, "password": password},
-                    timeout=3.0,
+                    timeout=5.0,
                 )
                 if r.status_code >= 400:
                     msg = r.json().get("error_description") or r.json().get("msg") or "Email atau kata sandi salah."
                     raise ValueError(msg)
                 body = r.json()
                 user_obj = body.get("user") or {}
+                user_dict = {
+                    "id": user_obj.get("id"),
+                    "email": user_obj.get("email", clean_email),
+                    "name": (user_obj.get("user_metadata") or {}).get("name") or clean_email.split("@")[0],
+                }
+                access_token = body["access_token"]
+                _TOKEN_CACHE[access_token] = user_dict
                 return {
-                    "access_token": body["access_token"],
-                    "user": {
-                        "id": user_obj.get("id"),
-                        "email": user_obj.get("email", clean_email),
-                        "name": (user_obj.get("user_metadata") or {}).get("name") or clean_email.split("@")[0],
-                    },
+                    "access_token": access_token,
+                    "refresh_token": body.get("refresh_token") or "",
+                    "user": user_dict,
                 }
             except ValueError:
                 raise
@@ -161,31 +206,80 @@ class RailumaStore:
                 info = {"id": u["id"], "email": u["email"], "name": u.get("name") or clean_email.split("@")[0]}
                 db["tokens"][token] = info
                 _simpan_lokal(db)
-                return {"access_token": token, "user": info}
+                return {"access_token": token, "refresh_token": token, "user": info}
         raise ValueError("Email atau kata sandi tidak cocok.")
+
+    def refresh_user_token(self, refresh_token: str) -> dict | None:
+        if not refresh_token:
+            return None
+        if refresh_token.startswith("local_"):
+            db = _baca_lokal()
+            info = db.get("tokens", {}).get(refresh_token)
+            if info:
+                return {"access_token": refresh_token, "refresh_token": refresh_token, "user": info}
+            return None
+        if not SUPABASE_OFFLINE:
+            try:
+                r = HTTP.post(
+                    f"{SUPABASE_URL}/auth/v1/token?grant_type=refresh_token",
+                    headers=_headers(),
+                    json={"refresh_token": refresh_token},
+                    timeout=5.0,
+                )
+                if r.ok:
+                    body = r.json()
+                    user_obj = body.get("user") or {}
+                    email = user_obj.get("email", "")
+                    user_dict = {
+                        "id": user_obj.get("id"),
+                        "email": email,
+                        "name": (user_obj.get("user_metadata") or {}).get("name") or (email.split("@")[0] if email else "Pengguna"),
+                    }
+                    new_access = body.get("access_token")
+                    if new_access:
+                        _TOKEN_CACHE[new_access] = user_dict
+                        return {
+                            "access_token": new_access,
+                            "refresh_token": body.get("refresh_token") or refresh_token,
+                            "user": user_dict,
+                        }
+            except Exception:  # noqa: BLE001
+                pass
+        return None
 
     def get_user_from_token(self, access_token: str | None) -> dict | None:
         if not access_token:
             return None
-        if not SUPABASE_OFFLINE and not access_token.startswith("local_"):
-            try:
-                r = requests.get(
-                    f"{SUPABASE_URL}/auth/v1/user",
-                    headers=_headers(access_token),
-                    timeout=6.0,
-                )
-                if r.ok:
-                    u = r.json()
-                    meta = u.get("user_metadata") or {}
-                    email = u.get("email", "")
-                    return {
-                        "id": u.get("id"),
-                        "email": email,
-                        "name": meta.get("name") or meta.get("full_name") or email.split("@")[0],
-                    }
-                return None
-            except Exception:  # noqa: BLE001
-                pass
+        if access_token in _TOKEN_CACHE:
+            return _TOKEN_CACHE[access_token]
+
+        if not access_token.startswith("local_"):
+            jwt_user = _decode_supabase_jwt(access_token)
+            if jwt_user and jwt_user.get("id"):
+                _TOKEN_CACHE[access_token] = jwt_user
+                return jwt_user
+
+            if not SUPABASE_OFFLINE:
+                try:
+                    r = HTTP.get(
+                        f"{SUPABASE_URL}/auth/v1/user",
+                        headers=_headers(access_token),
+                        timeout=4.0,
+                    )
+                    if r.ok:
+                        u = r.json()
+                        meta = u.get("user_metadata") or {}
+                        email = u.get("email", "")
+                        user_dict = {
+                            "id": u.get("id"),
+                            "email": email,
+                            "name": meta.get("name") or meta.get("full_name") or email.split("@")[0],
+                        }
+                        _TOKEN_CACHE[access_token] = user_dict
+                        return user_dict
+                    return None
+                except Exception:  # noqa: BLE001
+                    pass
 
         db = _baca_lokal()
         return db.get("tokens", {}).get(access_token)
@@ -195,10 +289,10 @@ class RailumaStore:
         if SUPABASE_OFFLINE:
             return {}
         try:
-            r = requests.get(
+            r = HTTP.get(
                 f"{SUPABASE_URL}/auth/v1/settings",
                 headers={"apikey": SUPABASE_KEY},
-                timeout=5.0,
+                timeout=4.0,
             )
             if r.ok:
                 return r.json().get("external") or {}
@@ -209,9 +303,10 @@ class RailumaStore:
     def logout_user(self, access_token: str | None) -> None:
         if not access_token:
             return
+        _TOKEN_CACHE.pop(access_token, None)
         if not SUPABASE_OFFLINE and not access_token.startswith("local_"):
             try:
-                requests.post(
+                HTTP.post(
                     f"{SUPABASE_URL}/auth/v1/logout",
                     headers=_headers(access_token),
                     timeout=1.5,
@@ -226,10 +321,10 @@ class RailumaStore:
     def list_sessions(self, user_id: str, access_token: str | None = None) -> list[dict]:
         if not SUPABASE_OFFLINE and access_token and not access_token.startswith("local_"):
             try:
-                r = requests.get(
+                r = HTTP.get(
                     f"{SUPABASE_URL}/rest/v1/railuma_sessions?user_id=eq.{user_id}&select=*&order=pinned.desc,updated_at.desc",
                     headers=_headers(access_token),
-                    timeout=5.0,
+                    timeout=4.0,
                 )
                 if r.ok:
                     sessions = r.json()
@@ -237,10 +332,10 @@ class RailumaStore:
                     items = []
                     if session_ids:
                         ids_str = ",".join(session_ids)
-                        r_items = requests.get(
+                        r_items = HTTP.get(
                             f"{SUPABASE_URL}/rest/v1/railuma_scan_items?session_id=in.({ids_str})&select=id,session_id,final_text,status,confidence,created_at&order=created_at.desc&limit=200",
                             headers=_headers(access_token),
-                            timeout=5.0,
+                            timeout=4.0,
                         )
                         items = r_items.json() if (r_items.ok and isinstance(r_items.json(), list)) else []
                     by_ses: dict[str, list] = {}
@@ -273,11 +368,11 @@ class RailumaStore:
         payload = {"user_id": user_id, "title": judul, "pinned": False}
         if not SUPABASE_OFFLINE and access_token and not access_token.startswith("local_"):
             try:
-                r = requests.post(
+                r = HTTP.post(
                     f"{SUPABASE_URL}/rest/v1/railuma_sessions",
                     headers=_headers(access_token),
                     json=payload,
-                    timeout=2.0,
+                    timeout=3.0,
                 )
                 if r.ok and r.json():
                     ses = r.json()[0]
@@ -308,25 +403,30 @@ class RailumaStore:
     def get_session_detail(self, user_id: str, session_id: str, access_token: str | None = None) -> dict | None:
         if not SUPABASE_OFFLINE and access_token and not access_token.startswith("local_"):
             try:
-                r = requests.get(
+                hdrs = _headers(access_token)
+                f_ses = _POOL.submit(
+                    HTTP.get,
                     f"{SUPABASE_URL}/rest/v1/railuma_sessions?id=eq.{session_id}&user_id=eq.{user_id}&select=*",
-                    headers=_headers(access_token),
-                    timeout=5.0,
+                    headers=hdrs,
+                    timeout=4.0,
                 )
+                f_it = _POOL.submit(
+                    HTTP.get,
+                    f"{SUPABASE_URL}/rest/v1/railuma_scan_items?session_id=eq.{session_id}&select=*&order=created_at.asc",
+                    headers=hdrs,
+                    timeout=4.0,
+                )
+                r = f_ses.result()
+                r_it = f_it.result()
                 if r.ok and r.json():
                     ses = r.json()[0]
-                    r_it = requests.get(
-                        f"{SUPABASE_URL}/rest/v1/railuma_scan_items?session_id=eq.{session_id}&select=*&order=created_at.asc",
-                        headers=_headers(access_token),
-                        timeout=5.0,
-                    )
                     items = r_it.json() if r_it.ok else []
                     if items:
                         ids_str = ",".join(i["id"] for i in items)
-                        r_rev = requests.get(
+                        r_rev = HTTP.get(
                             f"{SUPABASE_URL}/rest/v1/railuma_revisions?item_id=in.({ids_str})&select=*&order=revision_number.asc",
-                            headers=_headers(access_token),
-                            timeout=5.0,
+                            headers=hdrs,
+                            timeout=3.5,
                         )
                         revs = r_rev.json() if r_rev.ok else []
                         by_item: dict[str, list] = {}
@@ -364,19 +464,16 @@ class RailumaStore:
 
         if not SUPABASE_OFFLINE and access_token and not access_token.startswith("local_"):
             try:
-                r = requests.patch(
+                r = HTTP.patch(
                     f"{SUPABASE_URL}/rest/v1/railuma_sessions?id=eq.{session_id}&user_id=eq.{user_id}",
                     headers=_headers(access_token),
                     json=patch,
-                    timeout=5.0,
+                    timeout=3.5,
                 )
                 if r.ok and r.json():
                     return r.json()[0]
                 elif r.ok:
-                    # Supabase return 204 or representation empty, query back
                     return {"id": session_id, "user_id": user_id, **patch}
-            except Exception:  # noqa: BLE001
-                pass
             except Exception:  # noqa: BLE001
                 pass
 
@@ -391,10 +488,10 @@ class RailumaStore:
     def delete_session(self, user_id: str, session_id: str, access_token: str | None = None) -> bool:
         if not SUPABASE_OFFLINE and access_token and not access_token.startswith("local_"):
             try:
-                r = requests.delete(
+                r = HTTP.delete(
                     f"{SUPABASE_URL}/rest/v1/railuma_sessions?id=eq.{session_id}&user_id=eq.{user_id}",
                     headers=_headers(access_token),
-                    timeout=2.0,
+                    timeout=3.0,
                 )
                 if r.ok:
                     return True
@@ -420,11 +517,6 @@ class RailumaStore:
         payload: dict,
         access_token: str | None = None,
     ) -> dict | None:
-        # Pastikan sesi memang milik user_id
-        ses = self.get_session_detail(user_id, session_id, access_token)
-        if not ses:
-            return None
-
         now = _now_iso()
         row = {
             "session_id": session_id,
@@ -452,11 +544,12 @@ class RailumaStore:
         }
         if not SUPABASE_OFFLINE and access_token and not access_token.startswith("local_"):
             try:
-                r = requests.post(
+                hdrs = _headers(access_token)
+                r = HTTP.post(
                     f"{SUPABASE_URL}/rest/v1/railuma_scan_items",
-                    headers=_headers(access_token),
+                    headers=hdrs,
                     json=row,
-                    timeout=2.5,
+                    timeout=3.5,
                 )
                 if r.ok and r.json():
                     item = r.json()[0]
@@ -467,20 +560,22 @@ class RailumaStore:
                         "text_content": item["final_text"],
                         "note": "Hasil pindai awal model",
                     }
-                    r_rev = requests.post(
+                    f_rev = _POOL.submit(
+                        HTTP.post,
                         f"{SUPABASE_URL}/rest/v1/railuma_revisions",
-                        headers=_headers(access_token),
+                        headers=hdrs,
                         json=rev_payload,
-                        timeout=2.0,
+                        timeout=2.5,
                     )
-                    item["revisions"] = r_rev.json() if (r_rev.ok and r_rev.json()) else [rev_payload]
-
-                    requests.patch(
+                    _POOL.submit(
+                        HTTP.patch,
                         f"{SUPABASE_URL}/rest/v1/railuma_sessions?id=eq.{session_id}&user_id=eq.{user_id}",
-                        headers=_headers(access_token),
+                        headers=hdrs,
                         json={"updated_at": now},
-                        timeout=2.0,
+                        timeout=2.5,
                     )
+                    r_rev = f_rev.result()
+                    item["revisions"] = r_rev.json() if (r_rev.ok and r_rev.json()) else [rev_payload]
                     return item
             except Exception:  # noqa: BLE001
                 pass
@@ -518,41 +613,40 @@ class RailumaStore:
         now = _now_iso()
         if not SUPABASE_OFFLINE and access_token and not access_token.startswith("local_"):
             try:
-                r_get = requests.get(
-                    f"{SUPABASE_URL}/rest/v1/railuma_scan_items?id=eq.{item_id}&select=*",
-                    headers=_headers(access_token),
-                    timeout=2.0,
+                hdrs = _headers(access_token)
+                patch_item: dict = {"final_text": final_text, "status": "done"}
+                if notes is not None:
+                    patch_item["notes"] = notes
+                if cells_json is not None:
+                    patch_item["cells_json"] = cells_json
+
+                f_up = _POOL.submit(
+                    HTTP.patch,
+                    f"{SUPABASE_URL}/rest/v1/railuma_scan_items?id=eq.{item_id}",
+                    headers=hdrs,
+                    json=patch_item,
+                    timeout=3.0,
                 )
-                if r_get.ok and r_get.json():
-                    current = r_get.json()[0]
-                    r_revs = requests.get(
-                        f"{SUPABASE_URL}/rest/v1/railuma_revisions?item_id=eq.{item_id}&select=*&order=revision_number.asc",
-                        headers=_headers(access_token),
-                        timeout=2.0,
-                    )
+                f_revs = _POOL.submit(
+                    HTTP.get,
+                    f"{SUPABASE_URL}/rest/v1/railuma_revisions?item_id=eq.{item_id}&select=*&order=revision_number.asc",
+                    headers=hdrs,
+                    timeout=3.0,
+                )
+                r_up = f_up.result()
+                r_revs = f_revs.result()
+                if r_up.ok and r_up.json():
+                    updated_item = r_up.json()[0]
                     revs = r_revs.json() if r_revs.ok else []
                     next_no = (revs[-1]["revision_number"] + 1) if revs else 1
-
-                    patch_item: dict = {"final_text": final_text, "status": "done"}
-                    if notes is not None:
-                        patch_item["notes"] = notes
-                    if cells_json is not None:
-                        patch_item["cells_json"] = cells_json
-
-                    r_up = requests.patch(
-                        f"{SUPABASE_URL}/rest/v1/railuma_scan_items?id=eq.{item_id}",
-                        headers=_headers(access_token),
-                        json=patch_item,
-                        timeout=2.0,
-                    )
-                    updated_item = r_up.json()[0] if (r_up.ok and r_up.json()) else {**current, **patch_item}
 
                     rev_note = "Koreksi pengguna"
                     if correction and correction.get("cell_id"):
                         rev_note = f"Koreksi sel {correction['cell_id']}: {correction.get('from_symbol')} -> {correction.get('to_symbol')}"
-                        requests.post(
+                        _POOL.submit(
+                            HTTP.post,
                             f"{SUPABASE_URL}/rest/v1/railuma_corrections",
-                            headers=_headers(access_token),
+                            headers=hdrs,
                             json={
                                 "item_id": item_id,
                                 "cell_id": str(correction["cell_id"]),
@@ -562,12 +656,12 @@ class RailumaStore:
                                 "to_pattern": str(correction.get("to_pattern", "")),
                                 "consent_dataset": bool(correction.get("consent_dataset", False)),
                             },
-                            timeout=2.0,
+                            timeout=2.5,
                         )
 
-                    r_new_rev = requests.post(
+                    r_new_rev = HTTP.post(
                         f"{SUPABASE_URL}/rest/v1/railuma_revisions",
-                        headers=_headers(access_token),
+                        headers=hdrs,
                         json={
                             "item_id": item_id,
                             "revision_number": next_no,
@@ -575,17 +669,19 @@ class RailumaStore:
                             "text_content": final_text,
                             "note": rev_note,
                         },
-                        timeout=2.0,
+                        timeout=2.5,
                     )
                     if r_new_rev.ok and r_new_rev.json():
                         revs.append(r_new_rev.json()[0])
 
-                    requests.patch(
-                        f"{SUPABASE_URL}/rest/v1/railuma_sessions?id=eq.{current['session_id']}&user_id=eq.{user_id}",
-                        headers=_headers(access_token),
-                        json={"updated_at": now},
-                        timeout=2.0,
-                    )
+                    if updated_item.get("session_id"):
+                        _POOL.submit(
+                            HTTP.patch,
+                            f"{SUPABASE_URL}/rest/v1/railuma_sessions?id=eq.{updated_item['session_id']}&user_id=eq.{user_id}",
+                            headers=hdrs,
+                            json={"updated_at": now},
+                            timeout=2.5,
+                        )
                     updated_item["revisions"] = revs
                     return updated_item
             except Exception:  # noqa: BLE001
@@ -627,23 +723,18 @@ class RailumaStore:
     def delete_scan_item(self, user_id: str, session_id: str, item_id: str, access_token: str | None = None) -> bool:
         if not SUPABASE_OFFLINE and access_token and not access_token.startswith("local_"):
             try:
-                r_ses = requests.get(
-                    f"{SUPABASE_URL}/rest/v1/railuma_sessions?id=eq.{session_id}&user_id=eq.{user_id}&select=id",
-                    headers=_headers(access_token),
-                    timeout=2.0,
-                )
-                if not r_ses.ok or not r_ses.json():
-                    return False
-                r_del = requests.delete(
+                hdrs = _headers(access_token)
+                r_del = HTTP.delete(
                     f"{SUPABASE_URL}/rest/v1/railuma_scan_items?id=eq.{item_id}&session_id=eq.{session_id}",
-                    headers=_headers(access_token),
-                    timeout=2.0,
+                    headers=hdrs,
+                    timeout=3.0,
                 )
                 if r_del.ok:
-                    requests.delete(
+                    _POOL.submit(
+                        HTTP.delete,
                         f"{SUPABASE_URL}/rest/v1/railuma_revisions?item_id=eq.{item_id}",
-                        headers=_headers(access_token),
-                        timeout=2.0,
+                        headers=hdrs,
+                        timeout=2.5,
                     )
                     return True
             except Exception:  # noqa: BLE001

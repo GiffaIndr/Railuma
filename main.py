@@ -210,6 +210,10 @@ class AuthLoginReq(BaseModel):
     password: str
 
 
+class AuthRefreshReq(BaseModel):
+    refresh_token: str
+
+
 class SessionCreateReq(BaseModel):
     title: str = "Sesi Pindai Baru"
 
@@ -248,6 +252,14 @@ def api_auth_login(req: AuthLoginReq):
         return STORE.login_user(req.email, req.password)
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e)) from e
+
+
+@app.post("/api/v1/auth/refresh")
+def api_auth_refresh(req: AuthRefreshReq):
+    res = STORE.refresh_user_token(req.refresh_token)
+    if not res:
+        raise HTTPException(status_code=401, detail="Sesi login berakhir. Silakan masuk kembali.")
+    return res
 
 
 @app.get("/api/v1/auth/providers")

@@ -6,6 +6,7 @@ export const useCamera = () => {
   const streamRef = useRef(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState(null);
+  const [facingMode, setFacingMode] = useState("environment");
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
@@ -21,21 +22,28 @@ export const useCamera = () => {
   // Matikan kamera saat pengguna berpindah fitur
   useEffect(() => stopCamera, [stopCamera]);
 
-  const startCamera = useCallback(async () => {
+  const startCamera = useCallback(async (preferredFacing = null) => {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       setCameraError("Peramban Anda belum mendukung akses kamera (perlu izin HTTPS).");
       return false;
     }
 
+    const targetFacing = preferredFacing || facingMode || "environment";
+
     try {
       setCameraError(null);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
 
       // Urutan fallback constraint kamera agar kompatibel di semua merek HP (Samsung, Xiaomi, iPhone, dll.)
       const candidateConstraints = [
-        { video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
-        { video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } } },
-        { video: { facingMode: { ideal: "environment" } } },
-        { video: { facingMode: "environment" } },
+        { video: { facingMode: { exact: targetFacing }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
+        { video: { facingMode: { ideal: targetFacing }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
+        { video: { facingMode: { ideal: targetFacing }, width: { ideal: 1280 }, height: { ideal: 720 } } },
+        { video: { facingMode: { ideal: targetFacing } } },
+        { video: { facingMode: targetFacing } },
         { video: true },
       ];
 
@@ -83,6 +91,7 @@ export const useCamera = () => {
         } catch (playErr) {
           console.warn("Gagal memulai putar video otomatis:", playErr);
         }
+        setFacingMode(targetFacing);
         setIsCameraActive(true);
         return true;
       }
@@ -95,7 +104,13 @@ export const useCamera = () => {
       setCameraError("Kamera tidak bisa dinyalakan. Izinkan akses kamera di browser, lalu coba lagi.");
       return false;
     }
-  }, []);
+  }, [facingMode]);
+
+  const switchCamera = useCallback(async () => {
+    const nextFacing = facingMode === "environment" ? "user" : "environment";
+    setFacingMode(nextFacing);
+    return startCamera(nextFacing);
+  }, [facingMode, startCamera]);
 
   const captureFrame = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return Promise.resolve(null);
@@ -107,5 +122,5 @@ export const useCamera = () => {
     return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.92));
   }, []);
 
-  return { videoRef, canvasRef, isCameraActive, cameraError, startCamera, stopCamera, captureFrame };
+  return { videoRef, canvasRef, isCameraActive, cameraError, facingMode, startCamera, stopCamera, switchCamera, captureFrame };
 };

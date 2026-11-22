@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   ClipboardCheck,
@@ -350,7 +350,7 @@ function Shell() {
     // Periksa kembalian Google OAuth dari URL hash (#access_token=...)
     const oauth = parseOAuthHash();
     if (oauth?.access_token) {
-      setAuthSession(oauth.access_token, null);
+      setAuthSession(oauth.access_token, null, true, oauth.refresh_token || "");
       fetchCurrentUser()
         .then((u) => {
           if (u) {
@@ -379,7 +379,8 @@ function Shell() {
           }
         })
         .catch((err) => {
-          if (err?.status === 401) {
+          // Hanya keluar jika benar-benar tidak ada profil tersimpan dan token ditolak
+          if (err?.status === 401 && !getSavedUser()) {
             clearAuthSession();
             setCurrentUser(null);
             setView("landing");
@@ -387,19 +388,6 @@ function Shell() {
         });
     }
   }, []);
-
-  useEffect(() => {
-    if (currentUser && view === "studio") {
-      try {
-        const completed = localStorage.getItem("railuma_onboarding_completed");
-        if (completed !== "1") {
-          setShowTour(true);
-        }
-      } catch {
-        // abaikan
-      }
-    }
-  }, [currentUser, view]);
 
   useEffect(() => {
     if (!mobileMenuOpen) return undefined;
@@ -431,6 +419,16 @@ function Shell() {
       window.removeEventListener("keydown", onKey);
     };
   }, [userMenuOpen]);
+
+  const handleAuthExpired = useCallback(() => {
+    clearAuthSession();
+    setCurrentUser(null);
+    setView("auth");
+  }, []);
+
+  const handleChangeSubView = useCallback((next) => {
+    setNavId(next);
+  }, []);
 
   const handleOpenAuth = (mode = "login") => {
     setAuthMode(mode);
@@ -933,16 +931,13 @@ function Shell() {
               : "p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto"
           }`}
         >
-          <div key={navId} className="page-fade-enter">
+          <div key={isScannerSubView ? "scanner-workspace" : navId} className="page-fade-enter">
             {/* Judul halaman */}
             {navId === "beranda" ? (
               <div className="mb-6 flex flex-col gap-4 border-b border-[var(--border-subtle)] pb-5 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                  <span className="text-[0.82rem] font-semibold text-muted-theme">
-                    Ruang Kerja Railuma · {getTimeGreeting()}
-                  </span>
-                  <h1 className="m-0 mt-1 text-[1.65rem] sm:text-[2.1rem] font-extrabold tracking-tight text-[var(--text)]">
-                    Selamat datang, {firstName}.
+                  <h1 className="m-0 text-[1.65rem] sm:text-[2.1rem] font-extrabold tracking-tight text-[var(--text)]">
+                    {getTimeGreeting()}, {firstName}.
                   </h1>
                   <p className="m-0 mt-1 max-w-[56ch] text-[0.88rem] leading-relaxed text-muted-theme">
                     Lanjutkan pemindaian tulisan Braille, evaluasi lembar tugas
@@ -995,14 +990,10 @@ function Shell() {
               <BrailleScanner
                 currentUser={currentUser}
                 subView={navId}
-                onChangeSubView={(next) => setNavId(next)}
+                onChangeSubView={handleChangeSubView}
                 healthInfo={healthInfo}
                 onFullscreenChange={setIsCameraFullscreen}
-                onAuthExpired={() => {
-                  clearAuthSession();
-                  setCurrentUser(null);
-                  setView("auth");
-                }}
+                onAuthExpired={handleAuthExpired}
               />
             )}
 

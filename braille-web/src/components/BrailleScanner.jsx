@@ -6,21 +6,27 @@ import {
   CameraOff,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Copy,
   Download,
   FileText,
+  FolderOpen,
+  ImagePlus,
   Info,
+  Lock,
   Maximize2,
   Minimize2,
   Pin,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Smartphone,
   Sparkles,
   Trash2,
   TriangleAlert,
+  Unlock,
   Upload,
   Volume2,
   X,
@@ -79,8 +85,10 @@ export default function BrailleScanner({
     canvasRef,
     isCameraActive,
     cameraError,
+    facingMode,
     startCamera,
     stopCamera,
+    switchCamera,
     captureFrame,
   } = useCamera();
   const { announce } = useA11y();
@@ -139,11 +147,15 @@ export default function BrailleScanner({
   const [sessionFilter, setSessionFilter] = useState("");
   const [renamingId, setRenamingId] = useState(null);
   const [renameText, setRenameText] = useState("");
+  const [sessionDropdownOpen, setSessionDropdownOpen] = useState(false);
+  const sessionDropdownRef = useRef(null);
 
-  // Mode scan: live | sentence | photo | file
+  // Mode scan: live | sentence | photo
   const [scanMode, setScanMode] = useState("live");
   // Sumber kamera: webcam | phone | upload
   const [sourceMode, setSourceMode] = useState("webcam");
+  const [uploadedPreviewUrl, setUploadedPreviewUrl] = useState(null);
+  const [isDraggingUpload, setIsDraggingUpload] = useState(false);
 
   // Tab Panel Kanan pada Ruang Scan: hasil | alternatif | mutu
   const [rightTab, setRightTab] = useState("hasil");
@@ -291,7 +303,77 @@ export default function BrailleScanner({
   const [editingNote, setEditingNote] = useState("");
   const [savingRevision, setSavingRevision] = useState(false);
   const [copiedKey, setCopiedKey] = useState(null);
-  const sessionCacheRef = useRef(new Map());
+
+  const sessionCacheRef = useRef((() => {
+    const map = new Map();
+    try {
+      const raw = localStorage.getItem("railuma_session_details_cache");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          Object.entries(parsed).forEach(([k, v]) => map.set(k, v));
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return map;
+  })());
+
+  const persistSessionDetailCache = useCallback((id, detail) => {
+    if (!id || !detail) return;
+    sessionCacheRef.current.set(id, detail);
+    try {
+      const obj = {};
+      // Simpan maksimal 25 sesi terakhir di localStorage agar ringan
+      const entries = Array.from(sessionCacheRef.current.entries()).slice(-25);
+      entries.forEach(([k, v]) => {
+        if (!String(k).startsWith("temp-")) obj[k] = v;
+      });
+      localStorage.setItem("railuma_session_details_cache", JSON.stringify(obj));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const deletedSessionIdsRef = useRef(new Set());
+  const localOverridesRef = useRef(new Map());
+  const pendingCreatesRef = useRef(new Map());
+  const tempToRealIdRef = useRef(new Map());
+  const detailReqSeqRef = useRef(0);
+  const onAuthExpiredRef = useRef(onAuthExpired);
+  useEffect(() => {
+    onAuthExpiredRef.current = onAuthExpired;
+  }, [onAuthExpired]);
+  const lastValidLiveResultRef = useRef(null);
+  const sessionsRef = useRef(sessions);
+  useEffect(() => {
+    sessionsRef.current = sessions;
+    try {
+      const clean = sessions.filter((s) => !String(s.id).startsWith("temp-"));
+      localStorage.setItem("railuma_cached_sessions", JSON.stringify(clean));
+    } catch {
+      /* ignore */
+    }
+  }, [sessions]);
+
+  useEffect(() => {
+    if (!sessionDropdownOpen) return undefined;
+    const handleOutside = (e) => {
+      if (sessionDropdownRef.current && !sessionDropdownRef.current.contains(e.target)) {
+        setSessionDropdownOpen(false);
+      }
+    };
+    const handleEsc = (e) => {
+      if (e.key === "Escape") setSessionDropdownOpen(false);
+    };
+    window.addEventListener("mousedown", handleOutside);
+    window.addEventListener("keydown", handleEsc);
+    return () => {
+      window.removeEventListener("mousedown", handleOutside);
+      window.removeEventListener("keydown", handleEsc);
+    };
+  }, [sessionDropdownOpen]);
 
   const triggerCopy = useCallback((key, textToCopy, msg = "Teks disalin ke papan klip.") => {
     if (!textToCopy) return;
@@ -319,189 +401,188 @@ export default function BrailleScanner({
     }
   };
 
-  const loadSessionsList = useCallback(
-    async (selectId = null) => {
-      try {
-        const res = await listSessions();
-        const daftar = res.sessions || [];
-        setSessions(daftar);
-        try {
-          localStorage.setItem("railuma_cached_sessions", JSON.stringify(daftar));
-        } catch {
-          // abaikan
-        }
-        setSessionsState("ready");
-        const savedActive = (() => {
-          try {
-            return localStorage.getItem("railuma_active_session_id");
-          } catch {
-            return null;
-          }
-        })();
-        const targetId =
-          selectId ||
-          (savedActive && daftar.some((d) => d.id === savedActive) ? savedActive : null) ||
-          (activeSessionId && daftar.some((d) => d.id === activeSessionId) ? activeSessionId : null) ||
-          daftar[0]?.id ||
-          null;
-        setActiveSessionId(targetId);
-      } catch (err) {
-        console.error("Gagal mengambil sesi dari server:", err);
-        if (err?.status === 401 && onAuthExpired) {
-          onAuthExpired();
-          return;
-        }
-        try {
-          const cached = localStorage.getItem("railuma_cached_sessions");
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed)) {
-              setSessions(parsed);
-              setSessionsState("ready");
-              setActiveSessionId(selectId || activeSessionId || parsed[0]?.id || null);
-              return;
-            }
-          }
-        } catch {
-          // abaikan
-        }
-        setSessions([]);
-        setSessionsState("ready");
-      }
-    },
-    [activeSessionId, onAuthExpired],
-  );
+  const mergeServerSessions = useCallback((serverList) => {
+    const filtered = (serverList || [])
+      .filter((s) => !deletedSessionIdsRef.current.has(s.id))
+      .map((s) => {
+        const override = localOverridesRef.current.get(s.id);
+        const cachedDetail = sessionCacheRef.current.get(s.id);
+        const cachedCount = Array.isArray(cachedDetail?.items) ? cachedDetail.items.length : null;
+        return {
+          ...s,
+          ...(override || {}),
+          scan_count: cachedCount !== null ? Math.max(s.scan_count || 0, cachedCount) : (s.scan_count ?? 0),
+        };
+      });
+    const pendingList = Array.from(pendingCreatesRef.current.values()).filter(
+      (p) => !deletedSessionIdsRef.current.has(p.id),
+    );
+    const combined = [...pendingList, ...filtered];
+    combined.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+    return combined;
+  }, []);
 
-  const loadActiveSessionDetail = useCallback(async (id) => {
-    if (!id) {
-      setActiveSession(null);
-      setSelectedItem(null);
-      return;
-    }
-    // Optimistic cache hit
-    if (sessionCacheRef.current.has(id)) {
-      const cached = sessionCacheRef.current.get(id);
-      setActiveSession(cached);
-      const items = cached.items || [];
+  const applySelectedItemFromDetail = useCallback((detail) => {
+    const items = detail?.items || [];
+    setSelectedItem((prev) => {
+      if (prev?.isDraft) return prev;
       if (items.length > 0) {
         const last = items[items.length - 1];
-        setSelectedItem(last);
-        setEditingText(last.final_text || "");
-        setEditingNote(last.notes || "");
-      }
-    }
-    try {
-      const detail = await getSessionDetail(id);
-      sessionCacheRef.current.set(id, detail);
-      setActiveSession(detail);
-      const items = detail.items || [];
-      if (items.length > 0) {
-        const last = items[items.length - 1];
-        setSelectedItem(last);
         setEditingText(last.final_text || "");
         setEditingNote(last.notes || "");
         const firstReviewIdx = (last.cells_json || []).findIndex(
           (c) => c.flag === "review" || (c.conf ?? 1) < 0.65,
         );
         setSelectedCellIdx(firstReviewIdx >= 0 ? firstReviewIdx : null);
-      } else {
-        setSelectedItem(null);
-        setEditingText("");
-        setEditingNote("");
-        setSelectedCellIdx(null);
+        return last;
       }
-    } catch (err) {
-      console.error(err);
-    }
+      setEditingText("");
+      setEditingNote("");
+      setSelectedCellIdx(null);
+      return null;
+    });
   }, []);
 
+  const loadSessionsList = useCallback(
+    async (selectId = null) => {
+      try {
+        const res = await listSessions();
+        const daftar = mergeServerSessions(res.sessions || []);
+        setSessions(daftar);
+        setSessionsState("ready");
+        if (selectId && !deletedSessionIdsRef.current.has(selectId)) {
+          setActiveSessionId(selectId);
+        }
+      } catch (err) {
+        console.error("Gagal mengambil sesi dari server:", err);
+        if (err?.status === 401 && onAuthExpiredRef.current) {
+          onAuthExpiredRef.current();
+          return;
+        }
+        setSessionsState("ready");
+      }
+    },
+    [mergeServerSessions],
+  );
+
+  const loadActiveSessionDetail = useCallback(
+    async (id) => {
+      const resolvedId = tempToRealIdRef.current.get(id) || id;
+      if (!resolvedId || deletedSessionIdsRef.current.has(resolvedId)) {
+        setActiveSession(null);
+        setSelectedItem((prev) => (prev?.isDraft ? prev : null));
+        return;
+      }
+
+      if (String(resolvedId).startsWith("temp-")) {
+        const pending =
+          pendingCreatesRef.current.get(resolvedId) ||
+          sessionsRef.current.find((s) => s.id === resolvedId) || {
+            id: resolvedId,
+            title: "Sesi Baru",
+            items: [],
+          };
+        const detailObj = { ...pending, items: pending.items || [] };
+        setActiveSession(detailObj);
+        applySelectedItemFromDetail(detailObj);
+        return;
+      }
+
+      // 0ms instant response from memory cache or session list summary
+      if (sessionCacheRef.current.has(resolvedId)) {
+        const cached = sessionCacheRef.current.get(resolvedId);
+        const override = localOverridesRef.current.get(resolvedId);
+        const detailObj = { ...cached, ...(override || {}) };
+        setActiveSession(detailObj);
+        applySelectedItemFromDetail(detailObj);
+      } else {
+        const summary = sessionsRef.current.find((s) => s.id === resolvedId);
+        if (summary) {
+          setActiveSession((prev) =>
+            prev?.id === resolvedId ? prev : { ...summary, items: [] },
+          );
+        }
+      }
+
+      const reqSeq = ++detailReqSeqRef.current;
+      try {
+        const detail = await getSessionDetail(resolvedId);
+        if (!detail || deletedSessionIdsRef.current.has(resolvedId)) return;
+        const override = localOverridesRef.current.get(resolvedId);
+        const mergedDetail = { ...detail, ...(override || {}) };
+        persistSessionDetailCache(resolvedId, mergedDetail);
+
+        // Sinkronkan jumlah tangkapan & pratinjau ke kartu daftar sesi
+        const items = mergedDetail.items || [];
+        const lastPreview = items.length > 0 ? items[items.length - 1].final_text || "" : "";
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === resolvedId
+              ? {
+                  ...s,
+                  title: mergedDetail.title || s.title,
+                  pinned: mergedDetail.pinned ?? s.pinned,
+                  scan_count: items.length,
+                  last_preview: lastPreview || s.last_preview,
+                }
+              : s,
+          ),
+        );
+
+        if (reqSeq === detailReqSeqRef.current) {
+          setActiveSession(mergedDetail);
+          applySelectedItemFromDetail(mergedDetail);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    },
+    [applySelectedItemFromDetail, persistSessionDetailCache],
+  );
+
+  // Hanya jalankan sekali saat mount awal
   useEffect(() => {
     let active = true;
     listSessions()
-      .then(async (res) => {
+      .then((res) => {
         if (!active) return;
-        const daftar = res.sessions || [];
+        const daftar = mergeServerSessions(res.sessions || []);
         setSessions(daftar);
-        try {
-          localStorage.setItem("railuma_cached_sessions", JSON.stringify(daftar));
-        } catch {
-          // abaikan
-        }
         setSessionsState("ready");
-        const savedActive = (() => {
-          try {
-            return localStorage.getItem("railuma_active_session_id");
-          } catch {
-            return null;
+        setActiveSessionId((currId) => {
+          if (currId && (String(currId).startsWith("temp-") || daftar.some((d) => d.id === currId))) {
+            return currId;
           }
-        })();
-        const target = (savedActive && daftar.some((d) => d.id === savedActive))
-          ? savedActive
-          : (activeSessionId && daftar.some((d) => d.id === activeSessionId))
-            ? activeSessionId
-            : (daftar[0]?.id || null);
-        setActiveSessionId(target);
+          try {
+            const saved = localStorage.getItem("railuma_active_session_id");
+            if (saved && daftar.some((d) => d.id === saved)) return saved;
+          } catch {
+            /* ignore */
+          }
+          return daftar[0]?.id || null;
+        });
       })
       .catch((err) => {
         if (!active) return;
         console.error("Gagal memuat sesi:", err);
-        if (err?.status === 401 && onAuthExpired) {
-          onAuthExpired();
+        if (err?.status === 401 && onAuthExpiredRef.current) {
+          onAuthExpiredRef.current();
           return;
         }
-        try {
-          const cached = localStorage.getItem("railuma_cached_sessions");
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed)) {
-              setSessions(parsed);
-              setSessionsState("ready");
-              if (parsed[0]?.id) setActiveSessionId(parsed[0].id);
-              return;
-            }
-          }
-        } catch {
-          // abaikan
-        }
-        setSessions([]);
         setSessionsState("ready");
       });
     return () => {
       active = false;
     };
-  }, [onAuthExpired]);
+  }, [mergeServerSessions]);
 
   useEffect(() => {
-    if (!activeSessionId) return undefined;
-    let active = true;
-    getSessionDetail(activeSessionId)
-      .then((detail) => {
-        if (!active) return;
-        setActiveSession(detail);
-        const items = detail.items || [];
-        if (items.length > 0) {
-          const last = items[items.length - 1];
-          setSelectedItem(last);
-          setEditingText(last.final_text || "");
-          setEditingNote(last.notes || "");
-          const firstReviewIdx = (last.cells_json || []).findIndex(
-            (c) => c.flag === "review" || (c.conf ?? 1) < 0.65,
-          );
-          setSelectedCellIdx(firstReviewIdx >= 0 ? firstReviewIdx : null);
-        } else {
-          setSelectedItem(null);
-          setEditingText("");
-          setEditingNote("");
-          setSelectedCellIdx(null);
-        }
-      })
-      .catch((err) => {
-        console.error(err);
-      });
-    return () => {
-      active = false;
-    };
-  }, [activeSessionId]);
+    if (!activeSessionId) {
+      setActiveSession(null);
+      return;
+    }
+    loadActiveSessionDetail(activeSessionId);
+  }, [activeSessionId, loadActiveSessionDetail]);
 
   // Gambar overlay poligon di atas elemen <video>
   useEffect(() => {
@@ -613,9 +694,27 @@ export default function BrailleScanner({
           const finalTxt = (data.final_text || "").trim();
           if (finalTxt) {
             const voted = stabRef.current.push(finalTxt);
+            const rawTxt = (data.raw_text || "").trim() || voted.text;
             setLivePreviewText(voted.text);
-            setLiveRawText((data.raw_text || "").trim());
+            setLiveRawText(rawTxt);
             setLiveConfirmed(voted.confirmed);
+            lastValidLiveResultRef.current = {
+              final_text: voted.text,
+              raw_text: rawTxt,
+              cells: (data.cells || []).map((c) => ({
+                ...c,
+                original_symbol: c.original_symbol || c.symbol,
+                original_pattern: c.original_pattern || c.pattern,
+              })),
+              words: data.words || [],
+              mean_conf: data.mean_conf ?? 0.85,
+              n_cells: (data.cells || []).length,
+              skew_deg: data.skew_deg ?? 0,
+              pitch_px: data.pitch_px ?? 0,
+              quality: data.quality || null,
+              sharpness: data.quality?.sharpness ?? 0,
+              timestamp: Date.now(),
+            };
           }
         }
       } catch (e) {
@@ -679,7 +778,6 @@ export default function BrailleScanner({
   };
 
   const executeSingleOrFreezeScan = async (customBlob = null, customSource = sourceMode) => {
-    if (!activeSessionId) return;
     let blob = customBlob;
 
     if (!blob) {
@@ -694,7 +792,11 @@ export default function BrailleScanner({
       }
       const s = measureSharpness(videoRef.current);
       setSharp(s.variance);
-      if (s.ready && s.variance < 15) {
+      const hasLiveCached =
+        scanMode === "live" &&
+        (livePreviewText?.trim() || lastValidLiveResultRef.current?.final_text);
+
+      if (!hasLiveCached && s.ready && s.variance < 15) {
         setStatus("blur");
         announce("Gambar terlalu gelap atau kamera tertutup. Tahan kamera sebentar lalu coba lagi.");
         setFullscreenFeedback({
@@ -721,6 +823,68 @@ export default function BrailleScanner({
         message: "Gagal Mengambil Gambar",
         detail: "Tidak dapat mengekstrak frame dari sensor kamera.",
       });
+      return;
+    }
+
+    // JALUR INSTAN 0ms PADA MODE LIVE: jika di layar live sudah ada hasil bacaan, langsung tampilkan ke panel kanan tanpa menunggu request ulang!
+    if (
+      scanMode === "live" &&
+      customSource === "webcam" &&
+      (livePreviewText?.trim() || lastValidLiveResultRef.current?.final_text)
+    ) {
+      const liveSnap = lastValidLiveResultRef.current || {};
+      const finalTxt = (livePreviewText || liveSnap.final_text || "").trim();
+      const rawTxt = (liveRawText || liveSnap.raw_text || finalTxt).trim();
+      const rawCells = livePolygons.length > 0 ? livePolygons : (liveSnap.cells || []);
+      const cellsData = rawCells.map((c, idx) => ({
+        ...c,
+        id: c.id ?? `cell-${idx + 1}`,
+        original_symbol: c.original_symbol || c.symbol,
+        original_pattern: c.original_pattern || c.pattern || getPatternForSymbol(c.symbol),
+      }));
+      const wordsData = liveSnap.words || [];
+      const hasReview =
+        (liveSnap.mean_conf || 1) < 0.72 ||
+        cellsData.some((c) => c.flag === "review" || (c.conf ?? 1) < 0.65);
+
+      const draftItem = {
+        id: `draft-${Date.now()}`,
+        isDraft: true,
+        blob,
+        mode: scanMode,
+        source: customSource,
+        status: hasReview ? "needs_review" : "done",
+        confidence: liveSnap.mean_conf ?? 0.88,
+        cell_count: cellsData.length || finalTxt.replace(/\s+/g, "").length,
+        raw_text: rawTxt,
+        final_text: finalTxt,
+        cells_json: cellsData,
+        words_json: wordsData,
+        sharpness: liveSnap.sharpness || sharp || 90,
+        skew_deg: liveSnap.skew_deg ?? 0,
+        pitch_px: liveSnap.pitch_px ?? 0,
+        quality: liveSnap.quality || qualityInfo || null,
+        created_at: new Date().toISOString(),
+      };
+
+      setStatus("done");
+      setSelectedItem(draftItem);
+      setEditingText(draftItem.final_text);
+      setEditingNote("");
+      setSelectedCellIdx(0);
+      setRightTab("hasil");
+      announce(`Tangkapan live siap diverifikasi: "${draftItem.final_text}". Silakan periksa di panel kanan lalu simpan ke sesi.`);
+      toast.success("Tangkapan live siap! Periksa di panel kanan lalu simpan ke sesi.");
+
+      setFullscreenFeedback({
+        type: "done",
+        message: `Tangkapan Siap: "${draftItem.final_text}"`,
+        detail: "Hasil masuk ke panel kanan. Verifikasi lalu klik Simpan ke Sesi.",
+      });
+      clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = setTimeout(() => {
+        setFullscreenFeedback(null);
+      }, 4500);
       return;
     }
 
@@ -759,8 +923,14 @@ export default function BrailleScanner({
       setQualityInfo(res.quality || null);
       setSharp(res.sharpness ?? 0);
 
-      const finalTxt = scanMode === "live" && livePreviewText ? livePreviewText : (res.final_text || "").trim();
-      const rawTxt = scanMode === "live" && liveRawText ? liveRawText : (res.raw_text || finalTxt).trim();
+      const finalTxt =
+        scanMode === "live" && livePreviewText
+          ? livePreviewText
+          : (res.final_text || "").trim();
+      const rawTxt =
+        scanMode === "live" && liveRawText
+          ? liveRawText
+          : (res.raw_text || finalTxt).trim();
 
       if (!finalTxt) {
         setStatus("empty");
@@ -777,7 +947,12 @@ export default function BrailleScanner({
       }
 
       setStatus("done");
-      const cellsData = res.cells || [];
+      const cellsData = (res.cells || []).map((c, idx) => ({
+        ...c,
+        id: c.id ?? `cell-${idx + 1}`,
+        original_symbol: c.original_symbol || c.symbol,
+        original_pattern: c.original_pattern || c.pattern || getPatternForSymbol(c.symbol),
+      }));
       const wordsData = res.words || [];
       const hasReview =
         (res.mean_conf || 1) < 0.72 ||
@@ -798,6 +973,8 @@ export default function BrailleScanner({
         cells_json: cellsData,
         words_json: wordsData,
         sharpness: res.sharpness ?? sharp,
+        skew_deg: res.skew_deg ?? 0,
+        pitch_px: res.pitch_px ?? 0,
         quality: res.quality || null,
         created_at: new Date().toISOString(),
       };
@@ -912,11 +1089,34 @@ export default function BrailleScanner({
     await executeSingleOrFreezeScan(best.blob, "webcam");
   };
 
+  const processUploadedFileObj = async (file) => {
+    if (!file) return;
+    try {
+      const objUrl = URL.createObjectURL(file);
+      setUploadedPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return objUrl;
+      });
+    } catch {
+      /* ignore */
+    }
+    await executeSingleOrFreezeScan(file, "upload");
+  };
+
   const handleUploadFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    await executeSingleOrFreezeScan(file, "upload");
+    await processUploadedFileObj(file);
+  };
+
+  const handleDropUploadFile = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingUpload(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    await processUploadedFileObj(file);
   };
 
   const startPhonePairing = async () => {
@@ -988,49 +1188,112 @@ export default function BrailleScanner({
   };
 
   const handleCreateSession = async () => {
-    const num = String(sessions.length + 1).padStart(3, "0");
+    const existingNums = sessionsRef.current.map((s) => {
+      const m = /^Sesi\s+(\d+)$/i.exec((s.title || "").trim());
+      return m ? parseInt(m[1], 10) : 0;
+    });
+    const nextNum = Math.max(0, ...existingNums, sessionsRef.current.length) + 1;
+    const num = String(nextNum).padStart(3, "0");
     const title = `Sesi ${num}`;
-    const tempId = `temp-${Date.now()}`;
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const optimisticSession = {
       id: tempId,
       title,
       scan_count: 0,
-      last_preview: "Sesi baru dibuat. Siap digunakan.",
+      last_preview: "",
       pinned: false,
       created_at: new Date().toISOString(),
+      items: [],
     };
-    // Instan 0ms respon antarmuka
-    setSessions((prev) => [optimisticSession, ...prev]);
+
+    pendingCreatesRef.current.set(tempId, optimisticSession);
+    sessionCacheRef.current.set(tempId, optimisticSession);
+
+    // Instan 0ms respon antarmuka tanpa jeda jaringan
+    setSessions((prev) => {
+      const next = [optimisticSession, ...prev];
+      return next.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+    });
     setActiveSessionId(tempId);
+    setActiveSession(optimisticSession);
+    setSessionDropdownOpen(false);
     announce(`${title} dibuat.`);
     toast.success(`${title} berhasil dibuat.`);
 
     try {
       const baru = await createSession(title);
-      setSessions((prev) =>
-        prev.map((s) => (s.id === tempId ? { ...s, id: baru.id } : s)),
-      );
-      setActiveSessionId(baru.id);
-      loadSessionsList(baru.id, false);
+      pendingCreatesRef.current.delete(tempId);
+      tempToRealIdRef.current.set(tempId, baru.id);
+
+      // Jika pengguna menghapus sesi ini saat request create masih di jalan, langsung hapus di server
+      if (deletedSessionIdsRef.current.has(tempId)) {
+        deletedSessionIdsRef.current.add(baru.id);
+        deleteSession(baru.id).catch(() => {});
+        return;
+      }
+
+      const override = localOverridesRef.current.get(tempId);
+      if (override) {
+        localOverridesRef.current.set(baru.id, override);
+        localOverridesRef.current.delete(tempId);
+        updateSession(baru.id, override).catch(() => {});
+      }
+
+      const cachedTemp = sessionCacheRef.current.get(tempId);
+      const finalSes = {
+        ...baru,
+        scan_count: cachedTemp?.items?.length || 0,
+        last_preview: baru.last_preview || "",
+        ...(override || {}),
+      };
+      const finalDetail = {
+        ...finalSes,
+        items: cachedTemp?.items || [],
+      };
+      sessionCacheRef.current.delete(tempId);
+      persistSessionDetailCache(baru.id, finalDetail);
+
+      setSessions((prev) => {
+        const mapped = prev.map((s) => (s.id === tempId ? finalSes : s));
+        return mapped.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+      });
+      setActiveSessionId((curr) => (curr === tempId ? baru.id : curr));
+      setActiveSession((curr) => (curr?.id === tempId ? finalDetail : curr));
     } catch (err) {
       console.error(err);
-      toast.error("Gagal menyinkronkan sesi ke server.");
-      loadSessionsList();
+      pendingCreatesRef.current.delete(tempId);
+      toast.error("Gagal menyinkronkan sesi baru ke server.");
     }
   };
 
   const handleTogglePin = async (ses) => {
+    const targetId = tempToRealIdRef.current.get(ses.id) || ses.id;
     const nextPinned = !ses.pinned;
-    // Optimistic instant re-sort: pinned on top
+
+    const existingOverride = localOverridesRef.current.get(targetId) || {};
+    localOverridesRef.current.set(targetId, { ...existingOverride, pinned: nextPinned });
+
+    // Instan 0ms update & urutkan ulang
     setSessions((prev) => {
-      const updated = prev.map((s) => (s.id === ses.id ? { ...s, pinned: nextPinned } : s));
+      const updated = prev.map((s) =>
+        s.id === ses.id || s.id === targetId ? { ...s, pinned: nextPinned } : s,
+      );
       return [...updated].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
     });
+    if (sessionCacheRef.current.has(targetId)) {
+      const c = sessionCacheRef.current.get(targetId);
+      persistSessionDetailCache(targetId, { ...c, pinned: nextPinned });
+    }
+    setActiveSession((prev) =>
+      prev && (prev.id === ses.id || prev.id === targetId) ? { ...prev, pinned: nextPinned } : prev,
+    );
+
     announce(nextPinned ? "Sesi disematkan di atas." : "Semat sesi dilepas.");
     toast.info(nextPinned ? "Sesi disematkan di atas." : "Semat sesi dilepas.");
 
+    if (String(targetId).startsWith("temp-")) return;
     try {
-      await updateSession(ses.id, { pinned: nextPinned });
+      await updateSession(targetId, { pinned: nextPinned });
     } catch (err) {
       console.warn("Sinkronisasi status semat ke server tertunda:", err);
     }
@@ -1041,17 +1304,29 @@ export default function BrailleScanner({
       setRenamingId(null);
       return;
     }
+    const targetId = tempToRealIdRef.current.get(sesId) || sesId;
     const updatedTitle = renameText.trim();
+
+    const existingOverride = localOverridesRef.current.get(targetId) || {};
+    localOverridesRef.current.set(targetId, { ...existingOverride, title: updatedTitle });
+
     setSessions((prev) =>
-      prev.map((s) => (s.id === sesId ? { ...s, title: updatedTitle } : s)),
+      prev.map((s) => (s.id === sesId || s.id === targetId ? { ...s, title: updatedTitle } : s)),
+    );
+    if (sessionCacheRef.current.has(targetId)) {
+      const c = sessionCacheRef.current.get(targetId);
+      persistSessionDetailCache(targetId, { ...c, title: updatedTitle });
+    }
+    setActiveSession((prev) =>
+      prev && (prev.id === sesId || prev.id === targetId) ? { ...prev, title: updatedTitle } : prev,
     );
     setRenamingId(null);
     announce("Nama sesi diperbarui.");
     toast.success("Nama sesi berhasil diperbarui.");
 
+    if (String(targetId).startsWith("temp-")) return;
     try {
-      await updateSession(sesId, { title: updatedTitle });
-      if (sesId === activeSessionId) await loadActiveSessionDetail(sesId);
+      await updateSession(targetId, { title: updatedTitle });
     } catch (err) {
       console.error(err);
       toast.error("Gagal mengubah nama sesi di server.");
@@ -1059,26 +1334,32 @@ export default function BrailleScanner({
   };
 
   const handleDeleteSession = async (ses) => {
-    const nextList = sessions.filter((x) => x.id !== ses.id);
+    const targetId = tempToRealIdRef.current.get(ses.id) || ses.id;
+    deletedSessionIdsRef.current.add(ses.id);
+    deletedSessionIdsRef.current.add(targetId);
+    pendingCreatesRef.current.delete(ses.id);
+    sessionCacheRef.current.delete(ses.id);
+    sessionCacheRef.current.delete(targetId);
+
+    const nextList = sessionsRef.current.filter(
+      (x) => x.id !== ses.id && x.id !== targetId && !deletedSessionIdsRef.current.has(x.id),
+    );
     setSessions(nextList);
-    try {
-      localStorage.setItem("railuma_cached_sessions", JSON.stringify(nextList));
-    } catch {
-      // abaikan
-    }
-    if (activeSessionId === ses.id) {
+
+    if (activeSessionId === ses.id || activeSessionId === targetId) {
       const nextId = nextList[0]?.id || null;
       setActiveSessionId(nextId);
       if (!nextId) {
         setActiveSession(null);
-        setSelectedItem(null);
+        setSelectedItem((prev) => (prev?.isDraft ? prev : null));
       }
     }
     announce(`Sesi "${ses.title}" dihapus.`);
     toast.success(`Sesi "${ses.title}" berhasil dihapus.`);
 
+    if (String(targetId).startsWith("temp-")) return;
     try {
-      await deleteSession(ses.id);
+      await deleteSession(targetId);
     } catch (err) {
       console.error(err);
       toast.error("Gagal menghapus sesi di server.");
@@ -1087,20 +1368,26 @@ export default function BrailleScanner({
 
   const handleCommitDraftToSession = async () => {
     if (!selectedItem || !selectedItem.isDraft) return;
-    if (!activeSessionId) {
-      toast.error("Pilih atau buat sesi aktif terlebih dahulu untuk menyimpan.");
-      return;
-    }
+    let targetSessionId = tempToRealIdRef.current.get(activeSessionId) || activeSessionId;
 
     setSavingRevision(true);
     announce("Menyimpan hasil tangkapan ke sesi aktif...");
 
     try {
-      const res = await createSessionScan(activeSessionId, selectedItem.blob, {
+      // Jika belum ada sesi sama sekali atau masih tempId, pastikan sesi dibuat di server dulu
+      if (!targetSessionId || String(targetSessionId).startsWith("temp-")) {
+        const tempTitle = activeSession?.title || "Sesi 001";
+        const created = await createSession(tempTitle);
+        targetSessionId = created.id;
+        setActiveSessionId(targetSessionId);
+      }
+
+      const finalTxt = (editingText || selectedItem.final_text || "").trim();
+      const res = await createSessionScan(targetSessionId, selectedItem.blob, {
         mode: selectedItem.mode,
         source: selectedItem.source,
         checkBlur: false,
-        overrideFinalText: editingText || selectedItem.final_text,
+        overrideFinalText: finalTxt,
         overrideRawText: selectedItem.raw_text,
         cellsJson: selectedItem.cells_json,
       });
@@ -1108,17 +1395,41 @@ export default function BrailleScanner({
       const savedItem = res?.item || {
         ...selectedItem,
         id: res?.id || `item-${Date.now()}`,
-        final_text: editingText || selectedItem.final_text,
+        final_text: finalTxt,
+        notes: editingNote || "",
       };
       delete savedItem.isDraft;
       delete savedItem.blob;
 
+      // Update state lokal secara instan tanpa menunggu reload penuh
       setSelectedItem(savedItem);
       setEditingText(savedItem.final_text || "");
       setEditingNote(savedItem.notes || "");
 
-      await loadActiveSessionDetail(activeSessionId);
-      await loadSessionsList(activeSessionId, false);
+      setActiveSession((prev) => {
+        const prevItems = prev?.items || [];
+        const nextItems = [...prevItems, savedItem];
+        const nextDetail = {
+          ...(prev || { id: targetSessionId, title: "Sesi Aktif" }),
+          items: nextItems,
+          scan_count: nextItems.length,
+          last_preview: savedItem.final_text,
+        };
+        persistSessionDetailCache(targetSessionId, nextDetail);
+        return nextDetail;
+      });
+
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === targetSessionId
+            ? {
+                ...s,
+                scan_count: (s.scan_count || 0) + 1,
+                last_preview: savedItem.final_text,
+              }
+            : s,
+        ),
+      );
 
       announce(`Berhasil disimpan ke sesi: ${savedItem.final_text}`);
       toast.success("Berhasil disimpan ke sesi aktif!");
@@ -1150,18 +1461,29 @@ export default function BrailleScanner({
 
     cells[targetIdx] = {
       ...cells[targetIdx],
+      original_symbol: cells[targetIdx].original_symbol || cells[targetIdx].symbol,
+      original_pattern:
+        cells[targetIdx].original_pattern ||
+        cells[targetIdx].pattern ||
+        getPatternForSymbol(cells[targetIdx].symbol),
       flag: "ok",
       conf: 1.0,
       verified: true,
+      locked: true,
     };
 
     if (selectedItem.isDraft) {
       const updatedItem = { ...selectedItem, cells_json: cells };
       setSelectedItem(updatedItem);
-      announce(`Huruf "${cell.symbol}" telah disetujui.`);
-      toast.success(`Huruf "${cell.symbol}" disetujui.`);
+      announce(`Huruf "${cell.symbol}" telah disetujui dan dikunci.`);
+      toast.success(`Huruf "${cell.symbol}" disetujui & dikunci.`);
       return;
     }
+
+    const optimisticItem = { ...selectedItem, cells_json: cells };
+    setSelectedItem(optimisticItem);
+    announce(`Huruf "${cell.symbol}" telah disetujui dan dikunci.`);
+    toast.success(`Huruf "${cell.symbol}" disetujui & dikunci.`);
 
     setSavingRevision(true);
     try {
@@ -1170,10 +1492,16 @@ export default function BrailleScanner({
         notes: editingNote,
         cells_json: cells,
       });
-      const updatedItem = res?.item || { ...selectedItem, cells_json: cells };
-      setSelectedItem(updatedItem);
-      announce(`Huruf "${cell.symbol}" telah disetujui.`);
-      toast.success(`Huruf "${cell.symbol}" disetujui.`);
+      if (res?.item) {
+        const mergedCells = (res.item.cells_json || cells).map((c, idx) => ({
+          ...c,
+          verified: cells[idx]?.verified ?? c.verified,
+          locked: cells[idx]?.locked ?? c.locked,
+          original_symbol: cells[idx]?.original_symbol || c.original_symbol || c.symbol,
+          original_pattern: cells[idx]?.original_pattern || c.original_pattern || c.pattern,
+        }));
+        setSelectedItem({ ...res.item, cells_json: mergedCells });
+      }
     } catch (err) {
       console.error(err);
       toast.error("Gagal menyimpan persetujuan huruf.");
@@ -1182,43 +1510,103 @@ export default function BrailleScanner({
     }
   };
 
+  const handleUnlockCell = (cell) => {
+    if (!selectedItem) return;
+    const cells = [...(selectedItem.cells_json || [])];
+    const targetIdx = cells.findIndex((c) => c.id === cell.id);
+    if (targetIdx === -1) return;
+
+    cells[targetIdx] = {
+      ...cells[targetIdx],
+      verified: false,
+      locked: false,
+    };
+    setSelectedItem({ ...selectedItem, cells_json: cells });
+    announce(`Kunci huruf "${cell.symbol}" dibuka. Anda dapat memilih huruf alternatif.`);
+    toast.info(`Kunci huruf "${cell.symbol}" dibuka.`);
+  };
+
   const handleDeleteScanItem = async (itemId) => {
     if (!window.confirm("Hapus hasil tangkapan ini dari sesi?")) return;
+    const targetSessionId = tempToRealIdRef.current.get(activeSessionId) || activeSessionId;
     try {
-      setSessionItems((prev) => prev.filter((x) => x.id !== itemId));
+      setActiveSession((prev) => {
+        if (!prev) return prev;
+        const nextItems = (prev.items || []).filter((x) => x.id !== itemId);
+        const nextDetail = {
+          ...prev,
+          items: nextItems,
+          scan_count: nextItems.length,
+          last_preview: nextItems.length > 0 ? nextItems[nextItems.length - 1].final_text : "",
+        };
+        persistSessionDetailCache(targetSessionId, nextDetail);
+        if (selectedItem?.id === itemId) {
+          const fallback = nextItems.length > 0 ? nextItems[nextItems.length - 1] : null;
+          setSelectedItem(fallback);
+          setEditingText(fallback?.final_text || "");
+          setEditingNote(fallback?.notes || "");
+        }
+        return nextDetail;
+      });
       setSessions((prev) =>
         prev.map((s) =>
-          s.id === activeSessionId
+          s.id === activeSessionId || s.id === targetSessionId
             ? { ...s, scan_count: Math.max(0, (s.scan_count || 1) - 1) }
             : s,
         ),
       );
       announce("Tangkapan dihapus dari sesi.");
       toast.success("Tangkapan berhasil dihapus.");
-      await deleteSessionScan(activeSessionId, itemId);
-      await loadActiveSessionDetail(activeSessionId);
-      await loadSessionsList(activeSessionId, false);
+      await deleteSessionScan(targetSessionId, itemId);
     } catch (err) {
       console.error(err);
       toast.error("Gagal menghapus tangkapan dari server.");
-      await loadActiveSessionDetail(activeSessionId);
+      await loadActiveSessionDetail(targetSessionId);
     }
   };
 
   const handleApplyCellCorrection = async (cell, newSymbol) => {
     if (!selectedItem) return;
+    if (cell.locked || cell.verified) {
+      toast.info("Huruf ini sudah dikunci. Klik 'Buka Kunci Pilihan' jika ingin mengubah.");
+      return;
+    }
     const cells = [...(selectedItem.cells_json || [])];
     const targetIdx = cells.findIndex((c) => c.id === cell.id);
     if (targetIdx === -1) return;
 
-    const oldSymbol = cells[targetIdx].symbol;
-    const oldPattern = cells[targetIdx].pattern || getPatternForSymbol(oldSymbol);
+    const currentCell = cells[targetIdx];
+    const oldSymbol = currentCell.symbol;
+    if (oldSymbol === newSymbol) return;
+    const oldPattern = currentCell.pattern || getPatternForSymbol(oldSymbol);
+    const origSymbol = currentCell.original_symbol || oldSymbol;
+    const origPattern = currentCell.original_pattern || oldPattern;
     const newPattern = getPatternForSymbol(newSymbol);
 
+    // Pastikan huruf awal (original_symbol) & huruf sebelumnya tetap tersimpan di daftar kandidat
+    // sehingga pengguna tidak kehilangan huruf awal jika salah pencet!
+    const existingAlts = [...(currentCell.alternates || [])];
+    if (!existingAlts.some((a) => a.symbol === origSymbol)) {
+      existingAlts.unshift({
+        symbol: origSymbol,
+        pattern: origPattern,
+        isOriginal: true,
+      });
+    }
+    if (!existingAlts.some((a) => a.symbol === oldSymbol)) {
+      existingAlts.push({
+        symbol: oldSymbol,
+        pattern: oldPattern,
+      });
+    }
+
     cells[targetIdx] = {
-      ...cells[targetIdx],
+      ...currentCell,
       symbol: newSymbol,
       pattern: newPattern,
+      original_symbol: origSymbol,
+      original_pattern: origPattern,
+      alternates: existingAlts,
       flag: "ok",
       conf: 1.0,
     };
@@ -1241,6 +1629,15 @@ export default function BrailleScanner({
       return;
     }
 
+    const optimisticItem = {
+      ...selectedItem,
+      final_text: updatedText,
+      cells_json: cells,
+    };
+    setSelectedItem(optimisticItem);
+    announce(`Sel diubah dari ${oldSymbol} menjadi ${newSymbol}.`);
+    toast.success(`Huruf diganti ke "${newSymbol}".`);
+
     setSavingRevision(true);
     try {
       const res = await patchScanItem(selectedItem.id, {
@@ -1256,12 +1653,19 @@ export default function BrailleScanner({
           consent_dataset: isDatasetConsentOn(),
         },
       });
-      setSelectedItem(res.item);
-      await loadActiveSessionDetail(activeSessionId);
-      await loadSessionsList(activeSessionId, false);
-      announce(
-        `Sel ${cell.id} diubah dari ${oldSymbol} menjadi ${newSymbol}. Revisi baru tersimpan.`,
-      );
+      if (res?.item) {
+        setSelectedItem({ ...res.item, cells_json: cells });
+      }
+      const targetSessionId = tempToRealIdRef.current.get(activeSessionId) || activeSessionId;
+      setActiveSession((prev) => {
+        if (!prev) return prev;
+        const nextItems = (prev.items || []).map((it) =>
+          it.id === selectedItem.id ? { ...it, final_text: updatedText, cells_json: cells } : it,
+        );
+        const nextDetail = { ...prev, items: nextItems };
+        persistSessionDetailCache(targetSessionId, nextDetail);
+        return nextDetail;
+      });
     } catch (err) {
       console.error(err);
     } finally {
@@ -1287,12 +1691,28 @@ export default function BrailleScanner({
         final_text: editingText,
         notes: editingNote,
       });
-      setSelectedItem(res.item);
-      await loadActiveSessionDetail(activeSessionId);
-      await loadSessionsList(activeSessionId, false);
+      const updated = res?.item || { ...selectedItem, final_text: editingText, notes: editingNote };
+      setSelectedItem(updated);
+      const targetSessionId = tempToRealIdRef.current.get(activeSessionId) || activeSessionId;
+      setActiveSession((prev) => {
+        if (!prev) return prev;
+        const nextItems = (prev.items || []).map((it) => (it.id === updated.id ? updated : it));
+        const nextDetail = { ...prev, items: nextItems };
+        persistSessionDetailCache(targetSessionId, nextDetail);
+        return nextDetail;
+      });
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === activeSessionId || s.id === targetSessionId
+            ? { ...s, last_preview: editingText }
+            : s,
+        ),
+      );
       announce("Revisi baru tersimpan.");
+      toast.success("Perubahan teks berhasil disimpan.");
     } catch (err) {
       console.error(err);
+      toast.error("Gagal menyimpan perubahan teks.");
     } finally {
       setSavingRevision(false);
     }
@@ -1692,9 +2112,11 @@ export default function BrailleScanner({
                           <span>Sesi #{idx + 1}</span>
                           <span>{ses.scan_count ?? 0} tangkapan</span>
                         </div>
-                        <div className="text-left text-[0.96rem] font-bold text-[var(--text)]">
-                          {ses.pinned ? "★ " : ""}
-                          {ses.title}
+                        <div className="flex items-center gap-1.5 text-left text-[0.96rem] font-bold text-[var(--text)]">
+                          {ses.pinned && (
+                            <Pin size={14} className="flex-none text-[var(--primary)]" aria-hidden="true" />
+                          )}
+                          <span className="truncate">{ses.title}</span>
                         </div>
                         <p className="m-0 line-clamp-2 text-[0.83rem] text-muted-theme">
                           {ses.last_preview || "Belum ada hasil pindai."}
@@ -1951,62 +2373,157 @@ export default function BrailleScanner({
   // ============================================================================
   return (
     <div className="flex flex-col gap-5">
-      {/* JEJAK NAVIGASI RUANG SCAN */}
-      <nav
-        aria-label="Jejak Navigasi Sesi"
-        className="flex items-center gap-1.5 text-xs font-medium text-muted-theme px-1"
-      >
-        <button
-          type="button"
-          onClick={() => switchSubView("beranda")}
-          className="hover:text-[var(--text)] transition-colors border-0 bg-transparent p-0 cursor-pointer font-medium"
-        >
-          Studio
-        </button>
-        <ChevronRight size={13} aria-hidden="true" className="opacity-45 flex-none" />
-        <span className="font-semibold text-[var(--text)]">
-          Ruang Scan
-        </span>
-      </nav>
-
       {/* DECK KONTROL TERPADU RUANG SCAN */}
       <div className="rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface)] p-3.5 sm:p-5 shadow-sm">
         <div className="flex flex-col gap-3.5">
-          {/* Baris 1: Sesi Aktif & Indikator Sesi */}
+          {/* Baris 1: Pemilih Sesi Kustom Visual & Indikator Sesi */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--border-subtle)]">
             <div className="flex items-center gap-2 min-w-0 flex-1">
-              <span className="text-[0.78rem] font-semibold text-muted-theme uppercase tracking-wider hidden sm:inline">
-                Sesi:
+              <span className="text-[0.8rem] font-semibold text-muted-theme hidden sm:inline">
+                Sesi Aktif:
               </span>
-              <div className="flex items-center gap-2 min-w-0 flex-1">
-                <label htmlFor="pilih-sesi-aktif" className="sr-only">
-                  Pilih Sesi Braille
-                </label>
-                <select
+              <div ref={sessionDropdownRef} className="relative flex items-center gap-2 min-w-0 flex-1 max-w-[360px]">
+                <button
+                  type="button"
                   id="pilih-sesi-aktif"
-                  value={activeSessionId || ""}
-                  onChange={(e) => setActiveSessionId(e.target.value)}
-                  className="field !min-h-[38px] !max-w-[280px] sm:!max-w-[320px] flex-1 !py-1 !px-3 !text-[0.86rem] font-bold text-[var(--text)]"
+                  aria-haspopup="listbox"
+                  aria-expanded={sessionDropdownOpen}
+                  onClick={() => setSessionDropdownOpen((o) => !o)}
+                  className="flex min-h-[42px] w-full items-center justify-between gap-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-3 py-1.5 text-left transition-colors hover:border-[var(--border-strong)] cursor-pointer"
                 >
-                  {sessions.length === 0 ? (
-                    <option value="">Belum ada sesi (Klik +)</option>
-                  ) : (
-                    sessions.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.title}
-                      </option>
-                    ))
-                  )}
-                </select>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="flex h-7 w-7 flex-none items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--on-primary)]">
+                      <FolderOpen size={15} aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 text-[0.88rem] font-bold text-[var(--text)] truncate">
+                        {activeSession?.pinned && (
+                          <Pin size={12} className="flex-none text-[var(--primary)]" aria-hidden="true" />
+                        )}
+                        <span className="truncate">
+                          {activeSession?.title || sessions[0]?.title || "Belum ada sesi"}
+                        </span>
+                      </div>
+                      <span className="block truncate text-[0.73rem] text-muted-theme">
+                        {sessionItems.length} tangkapan tersimpan
+                      </span>
+                    </div>
+                  </div>
+                  <ChevronDown
+                    size={16}
+                    aria-hidden="true"
+                    className={`flex-none text-muted-theme transition-transform duration-150 ${
+                      sessionDropdownOpen ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+
                 <button
                   type="button"
                   onClick={handleCreateSession}
                   aria-label="Buat sesi pindai baru"
                   title="Buat sesi baru"
-                  className="btn btn-secondary btn-sm !h-[38px] !w-[38px] flex-none !p-0"
+                  className="btn btn-secondary btn-sm !h-[42px] !w-[42px] flex-none !p-0"
                 >
-                  <Plus size={16} aria-hidden="true" />
+                  <Plus size={17} aria-hidden="true" />
                 </button>
+
+                {sessionDropdownOpen && (
+                  <div
+                    role="listbox"
+                    aria-label="Daftar sesi pindai"
+                    className="absolute left-0 top-[calc(100%+6px)] z-50 w-full min-w-[290px] sm:min-w-[340px] rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface)] p-2 shadow-xl"
+                  >
+                    <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-[var(--border-subtle)] mb-1.5">
+                      <span className="text-[0.76rem] font-bold text-muted-theme">
+                        Pilih Sesi ({sessions.length})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSessionDropdownOpen(false);
+                          switchSubView("sesi");
+                        }}
+                        className="border-0 bg-transparent p-0 text-[0.76rem] font-bold text-[var(--primary)] hover:underline cursor-pointer"
+                      >
+                        Kelola Semua
+                      </button>
+                    </div>
+
+                    <div className="flex max-h-[260px] flex-col gap-1 overflow-y-auto pr-0.5">
+                      {sessions.length === 0 ? (
+                        <div className="px-3 py-4 text-center text-[0.82rem] text-muted-theme">
+                          Belum ada sesi. Klik tombol di bawah untuk membuat sesi pertama.
+                        </div>
+                      ) : (
+                        sessions.map((s) => {
+                          const isCurrent = s.id === activeSessionId;
+                          const rawChar = (s.last_preview || s.title || "s").trim()[0]?.toLowerCase() || "s";
+                          const previewChar = /[a-z]/.test(rawChar) ? rawChar : "s";
+                          return (
+                            <button
+                              key={s.id}
+                              type="button"
+                              role="option"
+                              aria-selected={isCurrent}
+                              onClick={() => {
+                                setActiveSessionId(s.id);
+                                setSessionDropdownOpen(false);
+                                announce(`Beralih ke ${s.title}.`);
+                              }}
+                              className={`flex w-full items-center justify-between gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors cursor-pointer border ${
+                                isCurrent
+                                  ? "border-[var(--primary)] bg-[var(--surface-sunken)]"
+                                  : "border-transparent bg-transparent hover:bg-[var(--surface-sunken)]/70"
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                <div className="flex-none rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] p-1">
+                                  <BrailleCellDiagram
+                                    symbol={previewChar}
+                                    pattern={getPatternForSymbol(previewChar)}
+                                    size={24}
+                                  />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5 text-[0.86rem] font-bold text-[var(--text)] truncate">
+                                    {s.pinned && (
+                                      <Pin size={12} className="flex-none text-[var(--primary)]" aria-hidden="true" />
+                                    )}
+                                    <span className="truncate">{s.title}</span>
+                                  </div>
+                                  <div className="truncate text-[0.75rem] text-muted-theme">
+                                    {s.last_preview ? `"${s.last_preview}"` : "Belum ada bacaan"}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 flex-none">
+                                <span className="rounded-md bg-[var(--surface-sunken)] px-2 py-0.5 text-[0.72rem] font-semibold text-muted-theme tabular-nums border border-[var(--border-subtle)]">
+                                  {s.scan_count ?? 0} data
+                                </span>
+                                {isCurrent && (
+                                  <Check size={15} className="text-[var(--primary)]" aria-hidden="true" />
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    <div className="mt-1.5 pt-1.5 border-t border-[var(--border-subtle)]">
+                      <button
+                        type="button"
+                        onClick={handleCreateSession}
+                        className="btn btn-primary btn-sm w-full !min-h-[36px]"
+                      >
+                        <Plus size={15} aria-hidden="true" />
+                        <span>Buat Sesi Pindai Baru</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -2020,99 +2537,100 @@ export default function BrailleScanner({
             </div>
           </div>
 
-          {/* Baris 2: Pemilihan Mode & Sumber Citra */}
+          {/* Baris 2: Pemilihan Sumber Citra & Mode Kamera */}
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <span className="text-[0.78rem] font-semibold text-muted-theme uppercase tracking-wider hidden sm:inline">
-                Mode:
-              </span>
-              <div
-                className="segmented-bar flex-1 sm:flex-none flex flex-nowrap overflow-x-auto no-scrollbar max-w-full"
-                role="group"
-                aria-label="Pilih mode pemindaian"
-              >
-                {[
-                  { id: "live", label: "Live" },
-                  { id: "sentence", label: "Kalimat" },
-                  { id: "photo", label: "Foto Presisi" },
-                  { id: "file", label: "Berkas" },
-                ].map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    aria-pressed={scanMode === m.id}
-                    onClick={() => {
-                      setScanMode(m.id);
-                      if (m.id === "file") {
-                        setSourceMode("upload");
-                        setLiveStreaming(false);
-                      } else if (sourceMode === "upload") {
-                        setSourceMode("webcam");
-                      }
-                      if (m.id === "live" && isCameraActive) setLiveStreaming(true);
-                      if (m.id !== "live") setLiveStreaming(false);
-                      announce(`Mode ${m.label} dipilih.`);
-                    }}
-                    className="segmented-item flex-1 sm:flex-none text-center"
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-[0.78rem] font-semibold text-muted-theme uppercase tracking-wider hidden sm:inline">
+              <span className="text-[0.8rem] font-semibold text-muted-theme hidden sm:inline">
                 Sumber:
               </span>
               <div
                 className="segmented-bar flex-1 sm:flex-none flex flex-nowrap overflow-x-auto no-scrollbar max-w-full"
                 role="group"
-                aria-label="Pilih sumber kamera"
+                aria-label="Pilih sumber gambar Braille"
               >
-                <Tooltip text="Gunakan webcam laptop / komputer utama" position="top">
+                <Tooltip text="Gunakan kamera perangkat ini (Kamera belakang di HP atau Webcam di Laptop)" position="top">
                   <button
                     type="button"
                     aria-pressed={sourceMode === "webcam"}
-                    onClick={() => setSourceMode("webcam")}
+                    onClick={() => {
+                      setSourceMode("webcam");
+                      announce("Sumber Kamera Perangkat dipilih.");
+                    }}
                     className="segmented-item w-full"
                   >
                     <Camera size={14} aria-hidden="true" />
-                    <span>Kamera</span>
+                    <span>Kamera Perangkat</span>
                   </button>
                 </Tooltip>
 
-                <Tooltip text="Hubungkan kamera HP via QR code untuk memindai dari atas meja" position="top">
+                <Tooltip text="Gunakan kamera HP secara nirkabel untuk memindai ke layar laptop ini" position="top">
                   <button
                     type="button"
                     aria-pressed={sourceMode === "phone"}
                     onClick={() => {
                       setSourceMode("phone");
+                      setLiveStreaming(false);
                       if (!pairToken) startPhonePairing();
+                      announce("Sumber Mirror Kamera HP dipilih.");
                     }}
                     className="segmented-item w-full"
                   >
                     <Smartphone size={14} aria-hidden="true" />
-                    <span>Kamera HP</span>
+                    <span>Mirror Kamera HP</span>
                   </button>
                 </Tooltip>
 
-                <Tooltip text="Unggah foto lembar Braille dari penyimpanan berkas" position="top">
+                <Tooltip text="Unggah foto lembar Braille di kotak tengah" position="top">
                   <button
                     type="button"
                     aria-pressed={sourceMode === "upload"}
                     onClick={() => {
                       setSourceMode("upload");
-                      fileInputRef.current?.click();
+                      setLiveStreaming(false);
+                      announce("Area Unggah Foto aktif di kotak tengah.");
                     }}
                     className="segmented-item w-full"
                   >
                     <Upload size={14} aria-hidden="true" />
-                    <span>Unggah</span>
+                    <span>Unggah Foto</span>
                   </button>
                 </Tooltip>
               </div>
             </div>
+
+            {sourceMode !== "upload" && (
+              <div className="flex items-center gap-2">
+                <span className="text-[0.8rem] font-semibold text-muted-theme hidden sm:inline">
+                  Mode Kamera:
+                </span>
+                <div
+                  className="segmented-bar flex-1 sm:flex-none flex flex-nowrap overflow-x-auto no-scrollbar max-w-full"
+                  role="group"
+                  aria-label="Pilih mode pemindaian kamera"
+                >
+                  {[
+                    { id: "live", label: "Live" },
+                    { id: "sentence", label: "Kalimat" },
+                    { id: "photo", label: "Foto Presisi" },
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      aria-pressed={scanMode === m.id}
+                      onClick={() => {
+                        setScanMode(m.id);
+                        if (m.id === "live" && isCameraActive) setLiveStreaming(true);
+                        if (m.id !== "live") setLiveStreaming(false);
+                        announce(`Mode ${m.label} dipilih.`);
+                      }}
+                      className="segmented-item flex-1 sm:flex-none text-center"
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <input
               ref={fileInputRef}
@@ -2127,20 +2645,24 @@ export default function BrailleScanner({
         </div>
       </div>
 
-      {/* RUANG KERJA BERDAMPINGAN 7:5 (Kamera di Kiri, Panel Hasil di Kanan) */}
+      {/* RUANG KERJA BERDAMPINGAN 7:5 (Kamera/Tempat Unggah di Kiri, Panel Hasil di Kanan) */}
       <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-12">
-        {/* KOLOM KIRI (7/12): VIEWFINDER KAMERA & KONTROL */}
+        {/* KOLOM KIRI (7/12): VIEWFINDER KAMERA / TEMPAT UNGGAH & KONTROL */}
         <section
           aria-labelledby="judul-viewfinder"
           className="card flex flex-col gap-4 xl:col-span-7"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 id="judul-viewfinder" className="m-0 text-[1.06rem] font-bold">
-              Kamera &amp; Deteksi Poligon
+              {sourceMode === "upload"
+                ? "Tempat Unggah Foto Braille"
+                : sourceMode === "phone"
+                  ? "Mirror Kamera HP ke Layar Ini"
+                  : "Kamera & Deteksi Poligon"}
             </h2>
 
             <div className="flex items-center gap-2">
-              {liveStreaming && liveLatencyMs > 0 && (
+              {liveStreaming && liveLatencyMs > 0 && sourceMode === "webcam" && (
                 <span className="text-[0.78rem] font-semibold text-muted-theme tabular-nums">
                   {liveLatencyMs} ms
                 </span>
@@ -2164,50 +2686,30 @@ export default function BrailleScanner({
             </div>
           </div>
 
-          {/* Panel Penyandingan HP bila sumber = phone */}
-          {sourceMode === "phone" && (
-            <div className="surface-subtle flex flex-col gap-3 p-4">
-              <div className="flex items-center justify-between gap-2">
-                <strong className="text-[0.95rem]">Sambungkan Kamera Belakang HP</strong>
-                <span className="status-chip">
-                  {pairPeers > 0 ? `${pairPeers} HP Terhubung` : "Menunggu HP..."}
-                </span>
-              </div>
-              <p className="m-0 text-[0.85rem] text-muted-theme">
-                Buka tautan di bawah ini pada browser HP untuk mengirim foto langsung ke{" "}
-                <strong>{activeSession?.title || "sesi aktif"}</strong>:
-              </p>
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="text"
-                  readOnly
-                  aria-label="Tautan penyandingan kamera HP"
-                  value={pairUrl || "Membuat tautan..."}
-                  className="field flex-1 !min-h-[38px] !py-1.5 !text-[0.82rem]"
-                />
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  disabled={!pairUrl}
-                  onClick={() => triggerCopy("pairUrl", pairUrl, "Tautan penyandingan HP disalin.")}
-                >
-                  {copiedKey === "pairUrl" ? (
-                    <Check size={15} className="text-emerald-500" aria-hidden="true" />
-                  ) : (
-                    <Copy size={15} aria-hidden="true" />
-                  )}
-                  <span>{copiedKey === "pairUrl" ? "Tersalin!" : "Salin Tautan"}</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Viewfinder Kamera Halus dengan HUD Sudut & Laser Scan */}
+          {/* Viewfinder Kamera / Dropzone Unggah / Mirror HP */}
           <div
+            onDragOver={
+              sourceMode === "upload"
+                ? (e) => {
+                    e.preventDefault();
+                    setIsDraggingUpload(true);
+                  }
+                : undefined
+            }
+            onDragLeave={
+              sourceMode === "upload"
+                ? () => setIsDraggingUpload(false)
+                : undefined
+            }
+            onDrop={sourceMode === "upload" ? handleDropUploadFile : undefined}
             className={
               isCameraFullscreen
                 ? "camera-fullscreen-viewport"
-                : "camera-viewport relative overflow-hidden"
+                : `camera-viewport relative overflow-hidden ${
+                    sourceMode === "upload" && isDraggingUpload
+                      ? "ring-4 ring-[#E6FF2E]"
+                      : ""
+                  }`
             }
           >
             {/* Header Kontrol Khusus Layar Penuh */}
@@ -2230,15 +2732,17 @@ export default function BrailleScanner({
                 </button>
               </div>
             ) : (
-              <button
-                type="button"
-                onClick={toggleCameraFullscreen}
-                aria-label="Layar penuh kamera"
-                title="Buka kamera layar penuh"
-                className="absolute top-3 right-3 z-20 flex h-9 w-9 items-center justify-center rounded-lg bg-black/60 text-white hover:bg-black/80 hover:text-[#E6FF2E] backdrop-blur-sm border border-white/15 transition-all shadow-sm"
-              >
-                <Maximize2 size={18} aria-hidden="true" />
-              </button>
+              sourceMode !== "upload" && (
+                <button
+                  type="button"
+                  onClick={toggleCameraFullscreen}
+                  aria-label="Layar penuh kamera"
+                  title="Buka kamera layar penuh"
+                  className="absolute top-3 right-3 z-20 flex h-9 w-9 items-center justify-center rounded-lg bg-black/60 text-white hover:bg-black/80 hover:text-[#E6FF2E] backdrop-blur-sm border border-white/15 transition-all shadow-sm"
+                >
+                  <Maximize2 size={18} aria-hidden="true" />
+                </button>
+              )
             )}
 
             {/* HUD Optical Corners */}
@@ -2255,7 +2759,54 @@ export default function BrailleScanner({
               }`}
             />
 
-            {sourceMode === "phone" ? (
+            {sourceMode === "upload" ? (
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    fileInputRef.current?.click();
+                  }
+                }}
+                aria-label="Klik atau tarik berkas foto Braille ke kotak ini untuk mengunggah"
+                className="relative z-10 flex h-full w-full flex-col items-center justify-center gap-3 p-6 text-center cursor-pointer hover:bg-white/5 transition-colors"
+              >
+                {uploadedPreviewUrl ? (
+                  <>
+                    <img
+                      src={uploadedPreviewUrl}
+                      alt="Pratinjau berkas foto Braille yang diunggah"
+                      className="max-h-[260px] w-auto max-w-full rounded-xl object-contain border border-white/20 shadow-lg"
+                    />
+                    <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
+                      <span className="rounded-lg bg-black/75 px-3 py-1.5 text-[0.8rem] font-bold text-[#E6FF2E] border border-white/15">
+                        {status === "loading" ? "Sedang Menganalisis Foto..." : "Klik untuk Mengganti Foto Lain"}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#E6FF2E] text-[#0B1C33] shadow-md">
+                      <ImagePlus size={28} aria-hidden="true" />
+                    </span>
+                    <div className="flex flex-col gap-1 max-w-[38ch]">
+                      <span className="text-[1.08rem] font-extrabold text-white">
+                        Klik atau Tarik Foto Braille ke Sini
+                      </span>
+                      <span className="text-[0.83rem] leading-relaxed text-white/80">
+                        Mendukung format JPG, PNG, atau WEBP. Hasil terjemahan akan muncul di panel kanan untuk Anda verifikasi sebelum disimpan ke sesi.
+                      </span>
+                    </div>
+                    <span className="mt-1 inline-flex items-center gap-2 rounded-xl bg-white/15 px-4 py-2 text-[0.84rem] font-bold text-white border border-white/20 hover:bg-white/25 transition-colors">
+                      <Upload size={16} aria-hidden="true" />
+                      <span>Pilih Foto dari Perangkat</span>
+                    </span>
+                  </>
+                )}
+              </div>
+            ) : sourceMode === "phone" ? (
               <>
                 {phoneStreamUrl ? (
                   <>
@@ -2274,26 +2825,56 @@ export default function BrailleScanner({
                         className="absolute top-3 left-3 z-10 flex items-center gap-2 rounded-full bg-black/75 px-3 py-1 text-[0.78rem] font-bold text-[#E6FF2E] backdrop-blur-sm shadow-sm"
                       >
                         <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-ping" />
-                        <span>Live Kamera HP</span>
+                        <span>Live Mirror Kamera HP</span>
                       </div>
                     )}
                     <div className="scanner-sweep-line" aria-hidden="true" />
                   </>
                 ) : (
-                  <div className="flex flex-col items-center gap-2.5 px-4 py-6 text-center z-10">
-                    <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white">
-                      <Smartphone size={22} aria-hidden="true" />
+                  <div className="flex flex-col items-center justify-center gap-3 px-5 py-6 text-center z-10 max-w-[440px]">
+                    <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 text-[#E6FF2E]">
+                      <Smartphone size={24} aria-hidden="true" />
                     </span>
-                    <span className="text-[1.02rem] font-bold text-white">
-                      {pairPeers > 0
-                        ? "HP Terhubung · Siap Pindai"
-                        : "Kamera HP Belum Terhubung"}
-                    </span>
-                    <span className="max-w-[36ch] text-[0.82rem] leading-relaxed text-white/75">
-                      {pairPeers > 0
-                        ? "Buka kamera di layar HP Anda untuk memunculkan pratinjau live di sini."
-                        : "Buka tautan penyandingan di peramban HP Anda untuk menampilkan pratinjau langsung."}
-                    </span>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[1.04rem] font-bold text-white">
+                        {pairPeers > 0
+                          ? "HP Terhubung · Siap Mirror Kamera"
+                          : "Mirror Kamera Belakang HP ke Laptop Ini"}
+                      </span>
+                      <span className="text-[0.8rem] leading-relaxed text-white/75">
+                        {pairPeers > 0
+                          ? "Nyalakan kamera pada halaman di HP Anda untuk menampilkan pratinjau langsung di layar ini."
+                          : "Fitur ini berguna saat Anda membuka Railuma di Laptop dan ingin memakai kamera belakang HP untuk memotret lembar Braille di meja."}
+                      </span>
+                    </div>
+
+                    <div className="w-full flex flex-col gap-2 rounded-xl bg-black/55 p-3 border border-white/15">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          readOnly
+                          aria-label="Tautan mirror kamera HP"
+                          value={pairUrl || "Membuat tautan penyandingan..."}
+                          className="w-full rounded-lg border border-white/20 bg-white/10 px-2.5 py-1.5 text-[0.78rem] text-white font-mono truncate"
+                        />
+                        <button
+                          type="button"
+                          disabled={!pairUrl}
+                          onClick={() => triggerCopy("pairUrl", pairUrl, "Tautan mirror kamera HP disalin.")}
+                          className="btn btn-primary btn-sm !bg-[#E6FF2E] !text-[#0B1C33] font-bold flex-none"
+                        >
+                          {copiedKey === "pairUrl" ? <Check size={14} /> : <Copy size={14} />}
+                          <span>{copiedKey === "pairUrl" ? "Tersalin" : "Salin"}</span>
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSourceMode("webcam")}
+                        className="border-0 bg-transparent p-0 text-[0.75rem] font-semibold text-[#E6FF2E] hover:underline cursor-pointer"
+                      >
+                        Sedang membuka langsung di HP? Klik di sini untuk memakai Kamera Perangkat langsung.
+                      </button>
+                    </div>
                   </div>
                 )}
               </>
@@ -2429,7 +3010,7 @@ export default function BrailleScanner({
                   </div>
                 )}
 
-                <div className="flex items-center justify-center gap-4 sm:gap-6 w-full max-w-sm">
+                <div className="flex items-center justify-center gap-3 sm:gap-5 w-full max-w-md">
                   <div className="flex items-center gap-1 bg-black/70 p-1.5 rounded-full backdrop-blur-md border border-white/20">
                     <button
                       type="button"
@@ -2438,7 +3019,7 @@ export default function BrailleScanner({
                         setLiveStreaming(true);
                         announce("Mode Live");
                       }}
-                      className={`px-3 py-1.5 rounded-full text-[0.78rem] font-bold transition-all ${
+                      className={`px-3 py-1.5 rounded-full text-[0.78rem] font-bold transition-all whitespace-nowrap ${
                         scanMode === "live"
                           ? "bg-[#E6FF2E] text-[#0A1628]"
                           : "text-white/80 hover:text-white"
@@ -2453,7 +3034,7 @@ export default function BrailleScanner({
                         setLiveStreaming(false);
                         announce("Mode Kalimat");
                       }}
-                      className={`px-3 py-1.5 rounded-full text-[0.78rem] font-bold transition-all ${
+                      className={`px-3 py-1.5 rounded-full text-[0.78rem] font-bold transition-all whitespace-nowrap ${
                         scanMode === "sentence"
                           ? "bg-[#E6FF2E] text-[#0A1628]"
                           : "text-white/80 hover:text-white"
@@ -2466,15 +3047,15 @@ export default function BrailleScanner({
                       onClick={() => {
                         setScanMode("photo");
                         setLiveStreaming(false);
-                        announce("Mode Foto");
+                        announce("Mode Foto Presisi");
                       }}
-                      className={`px-3 py-1.5 rounded-full text-[0.78rem] font-bold transition-all ${
+                      className={`px-3 py-1.5 rounded-full text-[0.78rem] font-bold transition-all whitespace-nowrap ${
                         scanMode === "photo"
                           ? "bg-[#E6FF2E] text-[#0A1628]"
                           : "text-white/80 hover:text-white"
                       }`}
                     >
-                      Foto
+                      Foto Presisi
                     </button>
                   </div>
 
@@ -2491,7 +3072,7 @@ export default function BrailleScanner({
                     }}
                     disabled={status === "loading" || (!isCameraActive && sourceMode !== "phone")}
                     aria-label={status === "loading" ? "Sedang memproses foto Braille" : "Ambil foto Braille"}
-                    className="flex h-[66px] w-[66px] items-center justify-center rounded-full bg-[#E6FF2E] text-[#0A1628] shadow-[0_0_24px_rgba(230,255,46,0.35)] active:scale-95 transition-all border-4 border-white/40 disabled:opacity-50"
+                    className="flex h-[66px] w-[66px] flex-none items-center justify-center rounded-full bg-[#E6FF2E] text-[#0A1628] shadow-[0_0_24px_rgba(230,255,46,0.35)] active:scale-95 transition-all border-4 border-white/40 disabled:opacity-50"
                   >
                     {status === "loading" ? (
                       <RefreshCw size={28} className="animate-spin text-[#0A1628]" aria-hidden="true" />
@@ -2521,7 +3102,7 @@ export default function BrailleScanner({
                       ? "Memproses foto..."
                       : pairPeers === 0
                         ? "Menunggu HP Terhubung..."
-                        : "Tangkap dari Kamera HP"}
+                        : "Tangkap dari Mirror HP"}
                   </span>
                 </button>
                 <button
@@ -2531,7 +3112,7 @@ export default function BrailleScanner({
                     if (!pairToken) {
                       startPhonePairing();
                     } else {
-                      triggerCopy("pairBtn", pairUrl, "Tautan penyandingan HP disalin.");
+                      triggerCopy("pairBtn", pairUrl, "Tautan mirror HP disalin.");
                     }
                   }}
                 >
@@ -2540,7 +3121,7 @@ export default function BrailleScanner({
                   ) : (
                     <Copy size={16} aria-hidden="true" />
                   )}
-                  <span>{copiedKey === "pairBtn" ? "Tersalin!" : "Salin Tautan HP"}</span>
+                  <span>{copiedKey === "pairBtn" ? "Tersalin!" : "Salin Tautan Mirror"}</span>
                 </button>
               </>
             ) : sourceMode === "upload" ? (
@@ -2548,9 +3129,16 @@ export default function BrailleScanner({
                 type="button"
                 className="btn btn-primary flex-1"
                 onClick={() => fileInputRef.current?.click()}
+                disabled={status === "loading"}
               >
                 <Upload size={18} aria-hidden="true" />
-                <span>Pilih Berkas Foto Braille</span>
+                <span>
+                  {status === "loading"
+                    ? "Memproses Foto..."
+                    : uploadedPreviewUrl
+                      ? "Pilih Foto Braille Lain"
+                      : "Pilih Foto Braille dari Perangkat"}
+                </span>
               </button>
             ) : !isCameraActive ? (
               <button
@@ -2605,6 +3193,23 @@ export default function BrailleScanner({
                   </button>
                 )}
 
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    switchCamera();
+                    announce(
+                      facingMode === "environment"
+                        ? "Beralih ke kamera depan."
+                        : "Beralih ke kamera belakang.",
+                    );
+                  }}
+                  title="Putar kamera depan / belakang"
+                >
+                  <RotateCcw size={16} aria-hidden="true" />
+                  <span className="hidden sm:inline">Putar Kamera</span>
+                </button>
+
                 <button type="button" className="btn btn-secondary" onClick={handleTurnOffCamera}>
                   <CameraOff size={18} aria-hidden="true" />
                   <span>Matikan</span>
@@ -2612,16 +3217,18 @@ export default function BrailleScanner({
               </>
             )}
 
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={toggleCameraFullscreen}
-              aria-label="Mode layar penuh kamera"
-              title="Mode layar penuh"
-            >
-              <Maximize2 size={16} aria-hidden="true" />
-              <span className="hidden sm:inline">Layar Penuh</span>
-            </button>
+            {sourceMode !== "upload" && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={toggleCameraFullscreen}
+                aria-label="Mode layar penuh kamera"
+                title="Mode layar penuh"
+              >
+                <Maximize2 size={16} aria-hidden="true" />
+                <span className="hidden sm:inline">Layar Penuh</span>
+              </button>
+            )}
           </div>
 
           {/* Pesan Status & Peringatan */}
@@ -2710,7 +3317,7 @@ export default function BrailleScanner({
               {/* TAB 1: HASIL BACAAN & AKSI CEPAT */}
               {rightTab === "hasil" && (
                 <div className="flex flex-col gap-4">
-                  {/* Banner Verifikasi Tangkapan Baru (Draft) */}
+                  {/* Banner Verifikasi Tangkapan Baru (Draft) - Satu-satunya tempat tombol Simpan ke Sesi */}
                   {selectedItem.isDraft && (
                     <div className="rounded-2xl border-2 border-[var(--primary)] bg-[var(--primary)]/10 p-4 text-[0.88rem] flex flex-col gap-2.5 shadow-sm">
                       <div className="flex items-center justify-between gap-2">
@@ -2723,7 +3330,7 @@ export default function BrailleScanner({
                         </span>
                       </div>
                       <p className="m-0 text-muted-theme text-[0.82rem] leading-relaxed">
-                        Data ini belum disimpan ke database sesi. Anda dapat memeriksa hasil teks, mengedit jika perlu, lalu klik tombol di bawah untuk menyimpan atau membuang.
+                        Periksa hasil bacaan atau koreksi teks di bawah terlebih dahulu. Klik <strong>Simpan ke Sesi Ini</strong> jika hasil sudah benar.
                       </p>
                       <div className="flex flex-wrap items-center gap-2 pt-1">
                         <button
@@ -2772,7 +3379,7 @@ export default function BrailleScanner({
                     </div>
 
                     <p className="m-0 mt-2.5 whitespace-pre-wrap text-[1.35rem] font-bold leading-snug">
-                      {selectedItem.final_text || "(Kosong)"}
+                      {editingText || selectedItem.final_text || "(Kosong)"}
                     </p>
                   </div>
 
@@ -2801,7 +3408,7 @@ export default function BrailleScanner({
                     <button
                       type="button"
                       className="btn btn-secondary btn-sm flex-1"
-                      onClick={() => triggerCopy("res-text", selectedItem.final_text || "", "Teks hasil disalin.")}
+                      onClick={() => triggerCopy("res-text", editingText || selectedItem.final_text || "", "Teks hasil disalin.")}
                     >
                       {copiedKey === "res-text" ? (
                         <Check size={15} className="text-emerald-500" aria-hidden="true" />
@@ -2813,7 +3420,7 @@ export default function BrailleScanner({
                     <button
                       type="button"
                       className="btn btn-secondary btn-sm flex-1"
-                      onClick={() => speakText(selectedItem.final_text || "")}
+                      onClick={() => speakText(editingText || selectedItem.final_text || "")}
                     >
                       <Volume2 size={15} aria-hidden="true" />
                       <span>Bacakan</span>
@@ -2840,13 +3447,19 @@ export default function BrailleScanner({
                   {/* Editor Revisi Langsung di Tempat */}
                   <div className="flex flex-col gap-2 border-t border-[var(--border-subtle)] pt-3">
                     <label htmlFor="editor-revisi-cepat" className="text-[0.86rem] font-semibold">
-                      {selectedItem.isDraft ? "Koreksi Teks Tangkapan Sebelum Disimpan" : "Koreksi Manual (Opsional)"}
+                      {selectedItem.isDraft ? "Edit Teks Pratinjau (Opsional)" : "Koreksi Manual (Opsional)"}
                     </label>
                     <textarea
                       id="editor-revisi-cepat"
                       rows={2}
                       value={editingText}
-                      onChange={(e) => setEditingText(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEditingText(val);
+                        if (selectedItem.isDraft) {
+                          setSelectedItem((prev) => (prev ? { ...prev, final_text: val } : prev));
+                        }
+                      }}
                       placeholder="Ubah atau perbaiki teks bacaan di sini jika perlu..."
                       className="field font-semibold"
                     />
@@ -2862,17 +3475,7 @@ export default function BrailleScanner({
                         placeholder="Catatan opsional (mis. halaman buku)..."
                         className="field flex-1 !min-h-[38px] !py-1.5 !text-[0.84rem]"
                       />
-                      {selectedItem.isDraft ? (
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-sm !bg-emerald-600 hover:!bg-emerald-700 !text-white font-bold"
-                          disabled={savingRevision}
-                          onClick={handleCommitDraftToSession}
-                        >
-                          <Check size={15} aria-hidden="true" />
-                          <span>{savingRevision ? "Menyimpan..." : "Simpan ke Sesi Ini"}</span>
-                        </button>
-                      ) : (
+                      {!selectedItem.isDraft && (
                         <button
                           type="button"
                           className="btn btn-primary btn-sm"
@@ -2891,8 +3494,7 @@ export default function BrailleScanner({
               {rightTab === "alternatif" && (
                 <div className="flex flex-col gap-4">
                   <p className="m-0 text-[0.86rem] text-muted-theme">
-                    Pilih salah satu huruf di bawah untuk memeriksa pola 6-titik, menyetujui huruf, atau menggantinya
-                    dengan kandidat berjarak 1 titik:
+                    Pilih salah satu huruf di bawah untuk memeriksa pola 6-titik, menyetujui &amp; mengunci huruf, atau menggantinya dengan kandidat berjarak 1 titik:
                   </p>
 
                   {selectedCells.length === 0 ? (
@@ -2906,7 +3508,8 @@ export default function BrailleScanner({
                       aria-label="Daftar sel Braille terdeteksi"
                     >
                       {selectedCells.map((c, idx) => {
-                        const isApproved = c.flag === "ok" || c.verified;
+                        const isLocked = Boolean(c.verified || c.locked);
+                        const isApproved = c.flag === "ok" || isLocked;
                         const isLow = !isApproved && (c.flag === "review" || (c.conf ?? 1) < 0.65);
                         const isPicked = selectedCellIdx === idx;
                         return (
@@ -2915,18 +3518,19 @@ export default function BrailleScanner({
                             type="button"
                             onClick={() => setSelectedCellIdx(isPicked ? null : idx)}
                             aria-pressed={isPicked}
-                            className={`min-h-[42px] min-w-[42px] rounded-[11px] px-2.5 py-1 font-bold text-[0.95rem] transition-colors ${
+                            className={`min-h-[42px] min-w-[42px] rounded-[11px] px-2.5 py-1 font-bold text-[0.95rem] transition-colors inline-flex items-center justify-center gap-1 ${
                               isPicked
                                 ? "border border-[var(--primary)] bg-[var(--primary)] text-[var(--on-primary)]"
                                 : isLow
                                   ? "border border-dashed border-[var(--peringatan-fg)] bg-[var(--peringatan-bg)] text-[var(--peringatan-fg)]"
-                                  : isApproved && c.verified
-                                    ? "border border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                  : isLocked
+                                    ? "border border-[#166534] bg-[#F0FDF4] text-[#166534] dark:border-[#34D399] dark:bg-[#064E3B] dark:text-[#EDF3FB]"
                                     : "border border-[var(--border-subtle)] bg-[var(--surface-sunken)] text-[var(--text)] hover:bg-[var(--awan-100)]"
                             }`}
                           >
-                            {c.symbol}
-                            {isLow ? "?" : ""}
+                            <span>{c.symbol}</span>
+                            {isLow && <span>?</span>}
+                            {isLocked && <Lock size={11} aria-hidden="true" />}
                           </button>
                         );
                       })}
@@ -2936,9 +3540,16 @@ export default function BrailleScanner({
                   {activeCell ? (
                     <div className="surface-subtle flex flex-col gap-3.5 p-4">
                       <div className="flex items-center justify-between gap-2">
-                        <strong className="text-[0.94rem]">
-                          Sel #{selectedCellIdx + 1} · Huruf &ldquo;{activeCell.symbol}&rdquo;
-                        </strong>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <strong className="text-[0.94rem]">
+                            Sel #{selectedCellIdx + 1} · Huruf &ldquo;{activeCell.symbol}&rdquo;
+                          </strong>
+                          {activeCell.original_symbol && activeCell.original_symbol !== activeCell.symbol && (
+                            <span className="status-chip status-chip-review !text-[0.72rem]">
+                              Awalnya: &ldquo;{activeCell.original_symbol}&rdquo;
+                            </span>
+                          )}
+                        </div>
                         <button
                           type="button"
                           className="btn btn-secondary !min-h-[32px] !px-2 !py-0.5"
@@ -2968,45 +3579,116 @@ export default function BrailleScanner({
                         </div>
                       </div>
 
-                      {/* Tombol Verifikasi / Setujui Huruf Ini */}
-                      <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--border-subtle)]">
-                        <button
-                          type="button"
-                          disabled={savingRevision}
-                          onClick={() => handleApproveCell(activeCell)}
-                          className="btn btn-primary btn-sm flex items-center gap-1.5 !bg-emerald-600 hover:!bg-emerald-700 !text-white"
-                        >
-                          <Check size={14} aria-hidden="true" />
-                          <span>Setujui Huruf Ini ({activeCell.symbol}) Sudah Benar</span>
-                        </button>
-                      </div>
-
-                      {activeCell.alternates?.length > 0 && (
-                        <div className="border-t border-[var(--border-subtle)] pt-3">
-                          <span className="mb-2 block text-[0.8rem] font-semibold text-muted-theme">
-                            Alternatif Terdekat (Selisih 1 Titik):
-                          </span>
-                          <div className="flex flex-wrap gap-2">
-                            {activeCell.alternates.map((alt) => (
-                              <button
-                                key={alt.symbol}
-                                type="button"
-                                disabled={savingRevision}
-                                onClick={() => handleApplyCellCorrection(activeCell, alt.symbol)}
-                                className="btn btn-secondary btn-sm flex items-center gap-2"
-                              >
-                                <BrailleCellDiagram
-                                  symbol={alt.symbol}
-                                  pattern={alt.pattern}
-                                  size={28}
-                                />
-                                <span>
-                                  Ganti ke <strong>{alt.symbol}</strong> ({alt.pattern})
-                                </span>
-                              </button>
-                            ))}
+                      {/* Status Terkunci vs Tombol Setujui & Pilihan Alternatif */}
+                      {activeCell.verified || activeCell.locked ? (
+                        <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface)] p-3 flex flex-wrap items-center justify-between gap-2.5">
+                          <div className="flex items-center gap-2 text-[0.84rem] font-bold text-[var(--text)]">
+                            <span className="status-chip status-chip-ok !px-2 !py-0.5">
+                              <Lock size={13} aria-hidden="true" />
+                              <span>Terkunci</span>
+                            </span>
+                            <span>Huruf &ldquo;{activeCell.symbol}&rdquo; Telah Disetujui</span>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => handleUnlockCell(activeCell)}
+                            className="btn btn-secondary btn-sm !min-h-[32px] !px-2.5 !py-1 !text-[0.78rem]"
+                          >
+                            <Unlock size={13} aria-hidden="true" />
+                            <span>Buka Kunci Pilihan</span>
+                          </button>
                         </div>
+                      ) : (
+                        <>
+                          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--border-subtle)]">
+                            <button
+                              type="button"
+                              disabled={savingRevision}
+                              onClick={() => handleApproveCell(activeCell)}
+                              className="btn btn-primary btn-sm flex items-center gap-1.5 !bg-emerald-600 hover:!bg-emerald-700 !text-white"
+                            >
+                              <Check size={14} aria-hidden="true" />
+                              <span>Setujui &amp; Kunci Huruf Ini ({activeCell.symbol}) Sudah Benar</span>
+                            </button>
+
+                            {activeCell.original_symbol &&
+                              activeCell.original_symbol !== activeCell.symbol && (
+                                <button
+                                  type="button"
+                                  disabled={savingRevision}
+                                  onClick={() =>
+                                    handleApplyCellCorrection(activeCell, activeCell.original_symbol)
+                                  }
+                                  className="btn btn-secondary btn-sm flex items-center gap-1.5"
+                                >
+                                  <RotateCcw size={13} aria-hidden="true" />
+                                  <span>
+                                    Kembalikan ke Huruf Awal ({activeCell.original_symbol})
+                                  </span>
+                                </button>
+                              )}
+                          </div>
+
+                          {(() => {
+                            const origSym = activeCell.original_symbol || activeCell.symbol;
+                            const origPat =
+                              activeCell.original_pattern ||
+                              getPatternForSymbol(origSym);
+                            const rawAlts = [...(activeCell.alternates || [])];
+                            if (
+                              origSym &&
+                              !rawAlts.some((a) => a.symbol === origSym)
+                            ) {
+                              rawAlts.unshift({
+                                symbol: origSym,
+                                pattern: origPat,
+                                isOriginal: true,
+                              });
+                            }
+                            const visibleAlts = rawAlts.filter(
+                              (alt) => alt.symbol !== activeCell.symbol,
+                            );
+                            if (visibleAlts.length === 0) return null;
+                            return (
+                              <div className="border-t border-[var(--border-subtle)] pt-3">
+                                <span className="mb-2 block text-[0.8rem] font-semibold text-muted-theme">
+                                  Alternatif Terdekat (Selisih 1 Titik):
+                                </span>
+                                <div className="flex flex-wrap gap-2">
+                                  {visibleAlts.map((alt) => {
+                                    const isOrig = alt.symbol === origSym;
+                                    return (
+                                      <button
+                                        key={alt.symbol}
+                                        type="button"
+                                        disabled={savingRevision}
+                                        onClick={() =>
+                                          handleApplyCellCorrection(activeCell, alt.symbol)
+                                        }
+                                        className={`btn btn-secondary btn-sm flex items-center gap-2 ${
+                                          isOrig
+                                            ? "!border-[var(--primary)] bg-[var(--primary)]/10"
+                                            : ""
+                                        }`}
+                                      >
+                                        <BrailleCellDiagram
+                                          symbol={alt.symbol}
+                                          pattern={alt.pattern || getPatternForSymbol(alt.symbol)}
+                                          size={28}
+                                        />
+                                        <span>
+                                          Ganti ke <strong>{alt.symbol}</strong> (
+                                          {alt.pattern || getPatternForSymbol(alt.symbol)})
+                                          {isOrig ? " · Huruf Awal" : ""}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </>
                       )}
                     </div>
                   ) : (
@@ -3015,10 +3697,10 @@ export default function BrailleScanner({
                     </p>
                   )}
                   {selectedItem.isDraft && (
-                    <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3.5 flex flex-wrap items-center justify-between gap-2.5">
-                      <div className="text-[0.82rem] text-emerald-800 dark:text-emerald-300">
+                    <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-sunken)] p-3.5 flex flex-wrap items-center justify-between gap-2.5">
+                      <div className="text-[0.82rem] text-[var(--text)]">
                         <strong className="block">Pratinjau Tangkapan</strong>
-                        <span>Selesai memeriksa sel? Simpan hasil ini ke sesi aktif.</span>
+                        <span className="text-muted-theme">Selesai memeriksa sel? Simpan hasil ini ke sesi aktif.</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <button
