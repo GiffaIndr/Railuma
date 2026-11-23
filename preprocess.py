@@ -10,13 +10,31 @@ _UKURAN_CEK = 320
 
 
 def laplacian_variance(img_bgr):
-    """Ukur ketajaman gambar pada lebar 320 px. Makin kecil nilainya, makin buram."""
+    """Ukur ketajaman gambar pada lebar 320 px (kombinasi global & patch lokal tertajam).
+
+    Pada kertas Braille yang sebagian besar permukaannya polos (mis. hanya 1 kata di sudut kertas),
+    varians global terlarut oleh 95% area kertas kosong. Mengambil rata-rata 3 patch lokal tertajam
+    (grid 8x8) memastikan ketajaman diukur pada area titik Braille yang sebenarnya.
+    """
     abu = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     h, w = abu.shape
     tinggi = max(3, round(h / w * _UKURAN_CEK))
     kecil = cv2.resize(abu, (_UKURAN_CEK, tinggi), interpolation=cv2.INTER_AREA)
     lap = cv2.Laplacian(kecil, cv2.CV_64F, ksize=1)
-    return float(lap[1:-1, 1:-1].var())
+    core = lap[1:-1, 1:-1]
+    global_var = float(core.var())
+
+    ch, cw = core.shape
+    ph, pw = max(4, ch // 8), max(4, cw // 8)
+    patch_vars = []
+    for y in range(0, ch - ph + 1, ph):
+        for x in range(0, cw - pw + 1, pw):
+            patch_vars.append(float(core[y : y + ph, x : x + pw].var()))
+    if len(patch_vars) >= 3:
+        patch_vars.sort(reverse=True)
+        top3_mean = float(np.mean(patch_vars[:3]))
+        return max(global_var, top3_mean)
+    return global_var
 
 
 def is_blurry(img_bgr, batas=None):
@@ -33,8 +51,7 @@ def assess_quality(img_bgr, batas_buram=None):
     tinggi = max(3, round(h / w * _UKURAN_CEK))
     kecil = cv2.resize(abu, (_UKURAN_CEK, tinggi), interpolation=cv2.INTER_AREA)
 
-    lap = cv2.Laplacian(kecil, cv2.CV_64F, ksize=1)
-    ketajaman = round(float(lap[1:-1, 1:-1].var()))
+    ketajaman = round(laplacian_variance(img_bgr))
     buram = ketajaman < batas
 
     kecerahan = float(kecil.mean())
@@ -77,3 +94,19 @@ def apply_clahe(img_bgr, clip_limit=2.0, tile=8):
     clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(tile, tile))
     l2 = clahe.apply(l)
     return cv2.cvtColor(cv2.merge((l2, a, b)), cv2.COLOR_LAB2BGR)
+
+
+def enhance_braille_lighting(img_bgr):
+    """Normalisasi bayangan besar (HP/tangan) + CLAHE + penajaman mikro untuk kondisi cahaya ekstrem."""
+    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    # 1. Estimasi amplop iluminasi latar (bayangan besar) dan ratakan
+    bg = cv2.GaussianBlur(l, (0, 0), sigmaX=31, sigmaY=31)
+    norm_l = cv2.divide(l, bg, scale=192)
+    # 2. Pertegas bayangan lokal titik Braille dengan CLAHE
+    clahe = cv2.createCLAHE(clipLimit=2.4, tileGridSize=(8, 8))
+    l2 = clahe.apply(norm_l)
+    # 3. Unsharp mask halus agar tepi titik timbul yang pudar lebih kontras
+    blur_small = cv2.GaussianBlur(l2, (0, 0), sigmaX=1.15)
+    l3 = cv2.addWeighted(l2, 1.35, blur_small, -0.35, 0)
+    return cv2.cvtColor(cv2.merge((l3, a, b)), cv2.COLOR_LAB2BGR)

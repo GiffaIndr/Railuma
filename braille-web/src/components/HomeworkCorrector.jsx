@@ -31,6 +31,8 @@ export default function HomeworkCorrector() {
   const [status, setStatus] = useState("idle");
   const [sharp, setSharp] = useState(0);
   const [report, setReport] = useState(null);
+  const [uploadedFile, setUploadedFile] = useState(null);
+  const [uploadedPreviewUrl, setUploadedPreviewUrl] = useState("");
   const fileRef = useRef(null);
 
   const finish = (raw) => {
@@ -59,9 +61,38 @@ export default function HomeworkCorrector() {
     return true;
   };
 
+  const evaluateUploadedFile = async (fileToScan) => {
+    if (!fileToScan) return;
+    if (!requireKey()) return;
+    setStatus("loading");
+    announce("Memindai foto tugas. Mohon tunggu.");
+    try {
+      const bmp = await createImageBitmap(fileToScan);
+      const s = measureSharpness(bmp);
+      setSharp(s.variance);
+      // Sama seperti Ruang Scan: berkas foto yang diunggah tetap dikirim ke server
+      // agar melalui adaptasi multi-cahaya tanpa ditolak di sisi browser.
+      const data = await translateBrailleImage(fileToScan, false);
+      if (data.status === "blurry") {
+        setSharp(data.sharpness ?? 0);
+        setStatus("blur");
+        return;
+      }
+      if (data.status !== "success") throw new Error(data.message || "Server gagal");
+      finish(data.raw_text || data.final_text || "");
+    } catch (err) {
+      console.error(err);
+      setStatus("error");
+    }
+  };
+
   const scanCamera = async () => {
     if (!requireKey()) return;
     if (!isCameraActive) {
+      if (uploadedFile) {
+        await evaluateUploadedFile(uploadedFile);
+        return;
+      }
       setStatus("nocam");
       return;
     }
@@ -83,40 +114,29 @@ export default function HomeworkCorrector() {
         return;
       }
       if (data.status !== "success") throw new Error(data.message || "Server gagal");
-      finish(data.raw_text || "");
+      finish(data.raw_text || data.final_text || "");
     } catch (err) {
       console.error(err);
       setStatus("error");
     }
   };
 
+  const handleFileChosen = async (file) => {
+    if (!file) return;
+    if (isCameraActive) stopCamera();
+    setUploadedFile(file);
+    setUploadedPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
+    await evaluateUploadedFile(file);
+  };
+
   const scanFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    if (!requireKey()) return;
-    setStatus("loading");
-    announce("Memindai foto tugas. Mohon tunggu.");
-    try {
-      const bmp = await createImageBitmap(file);
-      const s = measureSharpness(bmp);
-      setSharp(s.variance);
-      if (s.ready && s.variance < 15) {
-        setStatus("blur");
-        return;
-      }
-      const data = await translateBrailleImage(file, false);
-      if (data.status === "blurry") {
-        setSharp(data.sharpness ?? 0);
-        setStatus("blur");
-        return;
-      }
-      if (data.status !== "success") throw new Error(data.message || "Server gagal");
-      finish(data.raw_text || "");
-    } catch (err) {
-      console.error(err);
-      setStatus("error");
-    }
+    await handleFileChosen(file);
   };
 
   const speakSummary = () => {
@@ -168,7 +188,18 @@ export default function HomeworkCorrector() {
             <span className="status-chip">Dinilai murni dari titik murid</span>
           </div>
 
-          <div className="camera-viewport">
+          <div
+            className="camera-viewport relative cursor-pointer"
+            onClick={() => {
+              if (!isCameraActive) fileRef.current?.click();
+            }}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              const dropped = e.dataTransfer?.files?.[0];
+              if (dropped) handleFileChosen(dropped);
+            }}
+          >
             <video
               ref={videoRef}
               autoPlay
@@ -179,14 +210,28 @@ export default function HomeworkCorrector() {
               aria-label="Pratinjau kamera"
               className={`h-full w-full object-contain ${isCameraActive ? "block" : "hidden"}`}
             />
-            {!isCameraActive && (
+            {!isCameraActive && uploadedPreviewUrl && (
+              <div className="relative flex h-full w-full items-center justify-center">
+                <img
+                  src={uploadedPreviewUrl}
+                  alt="Foto lembar jawaban Braille murid yang diunggah"
+                  className="max-h-[340px] w-full object-contain"
+                />
+                <span className="absolute bottom-3 right-3 rounded-lg bg-black/75 px-3 py-1.5 text-[0.76rem] font-bold text-white">
+                  Klik untuk ganti foto
+                </span>
+              </div>
+            )}
+            {!isCameraActive && !uploadedPreviewUrl && (
               <div className="flex flex-col items-center gap-2.5 px-6 text-center">
                 <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white">
-                  <CameraOff size={22} aria-hidden="true" />
+                  <Upload size={22} aria-hidden="true" />
                 </span>
-                <span className="font-bold text-white">Kamera belum dinyalakan</span>
-                <span className="max-w-[36ch] text-[0.83rem] text-white/75">
-                  Nyalakan kamera atau unggah foto lembar jawaban Braille murid untuk mulai menilai.
+                <span className="font-bold text-white">
+                  Klik atau Tarik Foto Lembar Jawaban ke Sini
+                </span>
+                <span className="max-w-[38ch] text-[0.83rem] text-white/75">
+                  Unggah foto tugas Braille murid atau nyalakan kamera di bawah untuk menilai.
                 </span>
               </div>
             )}
@@ -233,7 +278,13 @@ export default function HomeworkCorrector() {
               disabled={status === "loading"}
             >
               <ClipboardCheck size={18} aria-hidden="true" />
-              <span>{status === "loading" ? "Memindai..." : "Pindai Tugas Murid"}</span>
+              <span>
+                {status === "loading"
+                  ? "Memindai..."
+                  : !isCameraActive && uploadedFile
+                    ? "Nilai Ulang Foto Ini"
+                    : "Pindai Tugas Murid"}
+              </span>
             </button>
 
             <input

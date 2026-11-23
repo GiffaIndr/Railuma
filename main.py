@@ -25,7 +25,7 @@ from ultralytics import YOLO
 
 from braille_logic import baca_boxes, process_braille_detections  # noqa: F401
 from koreksi import Kamus, koreksi_hasil
-from preprocess import apply_clahe, assess_quality, is_blurry
+from preprocess import apply_clahe, assess_quality, enhance_braille_lighting, is_blurry
 from supabase_db import STORE
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -77,14 +77,12 @@ PAIRING_TOKENS: dict[str, dict] = {}
 PAIRING_SOCKETS: dict[str, set[WebSocket]] = {}
 
 
-def jalankan(img, clahe=False, imgsz=None, conf=None, deskew=True):
-    """Pipeline lengkap pada satu gambar BGR. Dipakai endpoint dan evaluate.py."""
-    img_model = apply_clahe(img) if clahe else img
+def _prediksi_satu(img_in, conf_pakai, imgsz_pakai, deskew=True):
     r = model.predict(
-        source=img_model,
-        conf=CONF if conf is None else conf,
+        source=img_in,
+        conf=conf_pakai,
         iou=IOU,
-        imgsz=imgsz or IMGSZ,
+        imgsz=imgsz_pakai,
         agnostic_nms=True,
         max_det=500,
         verbose=False,
@@ -114,6 +112,39 @@ def jalankan(img, clahe=False, imgsz=None, conf=None, deskew=True):
         "pitch_px": round(hasil.pitch, 1),
         "model_version": MODEL_VERSION,
     }
+
+
+def jalankan(img, clahe=False, imgsz=None, conf=None, deskew=True):
+    """Pipeline lengkap pada satu gambar BGR dengan adaptasi multi-pencahayaan otomatis."""
+    conf_pakai = CONF if conf is None else conf
+    imgsz_pakai = imgsz or IMGSZ
+    img_utama = apply_clahe(img) if clahe else img
+    terbaik = _prediksi_satu(img_utama, conf_pakai, imgsz_pakai, deskew=deskew)
+
+    # Jika titik tidak terbaca atau keyakinan rata-rata di bawah 0.78 akibat bayangan HP,
+    # cahaya silau, atau kontras tipis, uji variasi normalisasi cahaya dan pilih hasil terbaik.
+    if terbaik["n_cells"] == 0 or terbaik["mean_conf"] < 0.78:
+        kandidat_imgs = [
+            img if clahe else apply_clahe(img),
+            enhance_braille_lighting(img),
+        ]
+        for img_alt in kandidat_imgs:
+            alt = _prediksi_satu(img_alt, conf_pakai, imgsz_pakai, deskew=deskew)
+            skor_alt = (alt["n_cells"] > 0, round(alt["mean_conf"], 2), alt["n_cells"])
+            skor_kini = (terbaik["n_cells"] > 0, round(terbaik["mean_conf"], 2), terbaik["n_cells"])
+            if skor_alt > skor_kini:
+                terbaik = alt
+
+        # Jika masih 0 sel dan conf memakai default, turunkan ambang deteksi ke 0.16
+        # untuk menangkap titik timbul berbayangan sangat tipis.
+        if terbaik["n_cells"] == 0 and conf is None and conf_pakai > 0.16:
+            for img_lemah in (enhance_braille_lighting(img), img):
+                alt_lemah = _prediksi_satu(img_lemah, 0.16, imgsz_pakai, deskew=deskew)
+                if alt_lemah["n_cells"] > 0:
+                    terbaik = alt_lemah
+                    break
+
+    return terbaik
 
 
 def _buat_thumbnail_data_url(img_bgr, max_w=640) -> str:
