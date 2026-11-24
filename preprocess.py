@@ -4,37 +4,19 @@ import os
 import cv2
 import numpy as np
 
-# Sinkron dengan braille-web/src/utils/blur.js (lebar 320 px, ambang 60).
+# Sinkron dengan braille-web/src/utils/blur.js (lebar 320 px, ambang 30).
 BLUR_MIN = float(os.getenv("BLUR_MIN", "30"))
 _UKURAN_CEK = 320
 
 
 def laplacian_variance(img_bgr):
-    """Ukur ketajaman gambar pada lebar 320 px (kombinasi global & patch lokal tertajam).
-
-    Pada kertas Braille yang sebagian besar permukaannya polos (mis. hanya 1 kata di sudut kertas),
-    varians global terlarut oleh 95% area kertas kosong. Mengambil rata-rata 3 patch lokal tertajam
-    (grid 8x8) memastikan ketajaman diukur pada area titik Braille yang sebenarnya.
-    """
+    """Ukur ketajaman gambar pada lebar 320 px (sama dengan pengecekan di browser)."""
     abu = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     h, w = abu.shape
     tinggi = max(3, round(h / w * _UKURAN_CEK))
     kecil = cv2.resize(abu, (_UKURAN_CEK, tinggi), interpolation=cv2.INTER_AREA)
     lap = cv2.Laplacian(kecil, cv2.CV_64F, ksize=1)
-    core = lap[1:-1, 1:-1]
-    global_var = float(core.var())
-
-    ch, cw = core.shape
-    ph, pw = max(4, ch // 8), max(4, cw // 8)
-    patch_vars = []
-    for y in range(0, ch - ph + 1, ph):
-        for x in range(0, cw - pw + 1, pw):
-            patch_vars.append(float(core[y : y + ph, x : x + pw].var()))
-    if len(patch_vars) >= 3:
-        patch_vars.sort(reverse=True)
-        top3_mean = float(np.mean(patch_vars[:3]))
-        return max(global_var, top3_mean)
-    return global_var
+    return float(lap[1:-1, 1:-1].var())
 
 
 def is_blurry(img_bgr, batas=None):

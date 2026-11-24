@@ -7,7 +7,9 @@ Perbedaan penting dari notebook lama:
   * imgsz=960 dan yolov8s : titik Braille kecil, butuh resolusi dan kapasitas lebih besar.
   * augmentasi cahaya/bayangan/rotasi kecil agar tahan kondisi kamera nyata.
   * API key tidak ditulis di kode. Simpan di Colab: Secrets -> ROBOFLOW_API_KEY
-    (atau variabel lingkungan ROBOFLOW_API_KEY).
+    (atau variabel lingkungan ROBOFLOW_API_KEY). Kunci API lama yang pernah tertulis
+    di notebook eksperimen awal harus dicabut (revoked) di pengaturan akun Roboflow.
+  * Dataset: braille-sight-s6rpk / braille-okym2 versi 1 (3.670 citra, 29.024 anotasi).
 
 Di Roboflow, cek juga: Generate -> Augmentation -> JANGAN pakai Flip.
 Setelah selesai, set IMGSZ=960 saat menjalankan API: IMGSZ=960 uvicorn main:app

@@ -20,8 +20,8 @@ label yang bertentangan, sehingga pasangan huruf ini sulit dibedakan.
 6. Kumpulkan 30–50 foto uji nyata + kunci `.txt` di folder `uji/`
    (foto ini jangan dipakai training), lalu `python evaluate.py --imgsz 640 960`.
    Bandingkan **CER raw vs final**: jika final lebih buruk, koreksi KBBI merusak hasil.
-7. Kalibrasi ambang ketajaman (`BLUR_MIN`, default 60) dengan kolom `ketajaman` di hasil evaluasi.
-   Nilai yang sama harus ada di `preprocess.py` (atau env `BLUR_MIN`) dan `utils/blur.js`.
+7. Kalibrasi ambang ketajaman (`BLUR_MIN`, default 30, dikalibrasi dari nilai awal 60) dengan kolom `ketajaman` di hasil evaluasi.
+   Nilai yang sama (`BLUR_MIN = 30`) digunakan di `preprocess.py` dan `braille-web/src/utils/blur.js`.
 
 ## Yang berubah
 | File | Perubahan |

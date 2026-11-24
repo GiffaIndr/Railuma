@@ -173,7 +173,33 @@ export const getWsBaseUrl = () => {
   return "ws://127.0.0.1:8000";
 };
 
-async function fetchJson(url, options = {}, timeoutMs = 35000, isRetry = false) {
+export function translateAuthErrorMessage(msg) {
+  if (!msg) return "Gagal memproses autentikasi akun.";
+  const low = String(msg).trim().toLowerCase();
+  if (low.includes("invalid login credentials") || low.includes("invalid_grant")) {
+    return "Email atau kata sandi salah. Periksa lagi lalu coba masuk kembali.";
+  }
+  if (low.includes("email not confirmed")) {
+    return "Alamat email belum dikonfirmasi. Periksa kotak masuk email Anda.";
+  }
+  if (low.includes("user already registered") || low.includes("already registered") || low.includes("already exists")) {
+    return "Alamat email ini sudah terdaftar. Silakan masuk menggunakan kata sandi Anda.";
+  }
+  if (low.includes("password should be at least")) {
+    return "Kata sandi minimal harus 6 karakter.";
+  }
+  if (low.includes("rate limit") || low.includes("too many requests")) {
+    return "Terlalu banyak percobaan masuk dalam waktu singkat. Tunggu sebentar lalu coba lagi.";
+  }
+  if (low.includes("unable to validate email") || low.includes("invalid email")) {
+    return "Format alamat email tidak valid. Periksa kembali penulisan email Anda.";
+  }
+  return msg;
+}
+
+const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchJson(url, options = {}, timeoutMs = 35000, isRetry = false, netRetryCount = 0) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const token = getAuthToken();
@@ -181,6 +207,9 @@ async function fetchJson(url, options = {}, timeoutMs = 35000, isRetry = false) 
   if (token && !headers.Authorization) {
     headers.Authorization = `Bearer ${token}`;
   }
+  const method = (options.method || "GET").toUpperCase();
+  const canAutoRetry = method === "GET" || url.includes("/translate");
+
   try {
     const response = await fetch(url, {
       ...options,
@@ -207,7 +236,7 @@ async function fetchJson(url, options = {}, timeoutMs = 35000, isRetry = false) 
                 refreshed.refresh_token || refreshToken,
               );
               const nextHeaders = { ...(options.headers || {}), Authorization: `Bearer ${refreshed.access_token}` };
-              return fetchJson(url, { ...options, headers: nextHeaders }, timeoutMs, true);
+              return fetchJson(url, { ...options, headers: nextHeaders }, timeoutMs, true, netRetryCount);
             }
           }
         } catch {
@@ -215,11 +244,16 @@ async function fetchJson(url, options = {}, timeoutMs = 35000, isRetry = false) 
         }
       }
     }
+    if ((response.status === 502 || response.status === 503 || response.status === 504) && canAutoRetry && netRetryCount < 2) {
+      clearTimeout(timer);
+      await waitMs(netRetryCount === 0 ? 700 : 1500);
+      return fetchJson(url, options, timeoutMs, isRetry, netRetryCount + 1);
+    }
     if (!response.ok) {
       let detail = `Server merespons dengan status ${response.status}.`;
       try {
         const errBody = await response.json();
-        if (errBody.detail) detail = errBody.detail;
+        if (errBody.detail) detail = translateAuthErrorMessage(errBody.detail);
       } catch {
         // biarkan pesan status
       }
@@ -229,13 +263,22 @@ async function fetchJson(url, options = {}, timeoutMs = 35000, isRetry = false) 
     }
     return response.json();
   } catch (err) {
+    const isTransientNet =
+      err.name === "AbortError" ||
+      (err.message && (err.message.toLowerCase().includes("failed to fetch") || err.message.toLowerCase().includes("networkerror")));
+
+    if (isTransientNet && canAutoRetry && netRetryCount < 2) {
+      clearTimeout(timer);
+      await waitMs(netRetryCount === 0 ? 700 : 1500);
+      return fetchJson(url, options, timeoutMs, isRetry, netRetryCount + 1);
+    }
     if (err.name === "AbortError") {
-      const abortErr = new Error("Koneksi ke layanan server memerlukan waktu lebih lama (cold-start). Silakan coba sesaat lagi.");
+      const abortErr = new Error("Server sedang bangun dari mode hemat daya (cold-start). Silakan coba sesaat lagi.");
       abortErr.status = 504;
       throw abortErr;
     }
     if (err.message && err.message.toLowerCase().includes("failed to fetch")) {
-      const netErr = new Error("Tidak dapat terhubung ke backend Railuma. Pastikan koneksi internet aktif.");
+      const netErr = new Error("Sedang menghubungkan ulang ke server Railuma. Pastikan koneksi internet aktif lalu coba lagi.");
       netErr.status = 503;
       throw netErr;
     }

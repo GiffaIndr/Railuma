@@ -543,36 +543,44 @@ export default function BrailleScanner({
   // Hanya jalankan sekali saat mount awal
   useEffect(() => {
     let active = true;
+    let retryTimer = null;
+    const applyLoadedSessions = (res) => {
+      if (!active) return;
+      const daftar = mergeServerSessions(res.sessions || []);
+      setSessions(daftar);
+      setSessionsState("ready");
+      setActiveSessionId((currId) => {
+        if (currId && (String(currId).startsWith("temp-") || daftar.some((d) => d.id === currId))) {
+          return currId;
+        }
+        try {
+          const saved = localStorage.getItem("railuma_active_session_id");
+          if (saved && daftar.some((d) => d.id === saved)) return saved;
+        } catch {
+          /* ignore */
+        }
+        return daftar[0]?.id || null;
+      });
+    };
+
     listSessions()
-      .then((res) => {
-        if (!active) return;
-        const daftar = mergeServerSessions(res.sessions || []);
-        setSessions(daftar);
-        setSessionsState("ready");
-        setActiveSessionId((currId) => {
-          if (currId && (String(currId).startsWith("temp-") || daftar.some((d) => d.id === currId))) {
-            return currId;
-          }
-          try {
-            const saved = localStorage.getItem("railuma_active_session_id");
-            if (saved && daftar.some((d) => d.id === saved)) return saved;
-          } catch {
-            /* ignore */
-          }
-          return daftar[0]?.id || null;
-        });
-      })
+      .then(applyLoadedSessions)
       .catch((err) => {
         if (!active) return;
-        console.error("Gagal memuat sesi:", err);
         if (err?.status === 401 && onAuthExpiredRef.current) {
           onAuthExpiredRef.current();
           return;
         }
         setSessionsState("ready");
+        // Coba muat ulang otomatis di latar belakang bila server sedang bangun (cold-start)
+        retryTimer = setTimeout(() => {
+          if (!active) return;
+          listSessions().then(applyLoadedSessions).catch(() => {});
+        }, 2500);
       });
     return () => {
       active = false;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [mergeServerSessions]);
 

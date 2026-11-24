@@ -100,6 +100,26 @@ def _hash_pw(pw: str) -> str:
     return hashlib.sha256(f"railuma:{pw}".encode("utf-8")).hexdigest()
 
 
+def _terjemahkan_galat_auth(msg: str) -> str:
+    """Terjemahkan pesan galat bahasa Inggris dari Supabase Auth (GoTrue) ke bahasa Indonesia."""
+    if not msg:
+        return "Gagal memproses autentikasi akun. Periksa kembali data Anda."
+    low = msg.strip().lower()
+    if "invalid login credentials" in low or "invalid_grant" in low:
+        return "Email atau kata sandi salah. Periksa lagi lalu coba masuk kembali."
+    if "email not confirmed" in low:
+        return "Alamat email belum dikonfirmasi. Periksa kotak masuk email Anda."
+    if "user already registered" in low or "already registered" in low or "already exists" in low:
+        return "Alamat email ini sudah terdaftar. Silakan masuk menggunakan kata sandi Anda."
+    if "password should be at least" in low:
+        return "Kata sandi minimal harus 6 karakter."
+    if "rate limit" in low or "too many requests" in low:
+        return "Terlalu banyak percobaan masuk dalam waktu singkat. Tunggu sebentar lalu coba lagi."
+    if "unable to validate email" in low or "invalid email" in low:
+        return "Format alamat email tidak valid. Periksa kembali penulisan email Anda."
+    return msg
+
+
 class RailumaStore:
     """Mengelola Supabase Auth (GoTrue) dan CRUD RLS per user_id ke public.railuma_*."""
 
@@ -120,8 +140,8 @@ class RailumaStore:
                     timeout=5.0,
                 )
                 if r.status_code >= 400:
-                    msg = r.json().get("msg") or r.json().get("error_description") or r.json().get("message") or "Pendaftaran gagal."
-                    raise ValueError(msg)
+                    raw_msg = r.json().get("msg") or r.json().get("error_description") or r.json().get("message") or "Pendaftaran gagal."
+                    raise ValueError(_terjemahkan_galat_auth(raw_msg))
                 body = r.json()
                 access_token = body.get("access_token")
                 refresh_token = body.get("refresh_token") or ""
@@ -177,8 +197,8 @@ class RailumaStore:
                     timeout=5.0,
                 )
                 if r.status_code >= 400:
-                    msg = r.json().get("error_description") or r.json().get("msg") or "Email atau kata sandi salah."
-                    raise ValueError(msg)
+                    raw_msg = r.json().get("error_description") or r.json().get("msg") or r.json().get("message") or "Email atau kata sandi salah."
+                    raise ValueError(_terjemahkan_galat_auth(raw_msg))
                 body = r.json()
                 user_obj = body.get("user") or {}
                 user_dict = {

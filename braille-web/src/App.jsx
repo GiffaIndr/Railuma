@@ -132,7 +132,7 @@ function SidebarContent({
             type="button"
             onClick={onGoHome}
             className="flex items-center gap-2.5 border-0 bg-transparent p-0 text-left text-[var(--text)] group cursor-pointer"
-            aria-label="Kembali ke Halaman Depan"
+            aria-label="Railuma Ruang Kerja Braille, kembali ke halaman depan"
           >
             <BrandMark />
             <div>
@@ -490,7 +490,7 @@ function Shell() {
                 setMobileMenuOpen(false);
                 setView("landing");
               }}
-              aria-label="Beranda Railuma"
+              aria-label="Railuma, kembali ke halaman depan"
               className="group flex items-center gap-2.5 rounded-xl px-2.5 py-1.5 -ml-2.5 border-0 bg-transparent text-left text-[var(--text)] transition-all duration-200 hover:bg-[var(--surface-sunken)] cursor-pointer"
             >
               <BrandMark className="transition-transform duration-200 group-hover:scale-105" />

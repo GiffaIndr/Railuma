@@ -5,7 +5,7 @@ Variabel lingkungan (semua opsional):
   MODEL_PATH       lokasi bobot YOLO            (default: best.pt di folder ini)
   IMGSZ            ukuran input inferensi       (default: otomatis = imgsz training model, mis. 960)
   CONF / IOU       ambang deteksi               (default: 0.25 / 0.45)
-  BLUR_MIN         ambang ketajaman             (default: 60)
+  BLUR_MIN         ambang ketajaman             (default: 30)
   ALLOWED_ORIGINS  daftar origin dipisah koma   (default: *)
 """
 from __future__ import annotations
@@ -114,16 +114,16 @@ def _prediksi_satu(img_in, conf_pakai, imgsz_pakai, deskew=True):
     }
 
 
-def jalankan(img, clahe=False, imgsz=None, conf=None, deskew=True):
-    """Pipeline lengkap pada satu gambar BGR dengan adaptasi multi-pencahayaan otomatis."""
+def jalankan(img, clahe=False, imgsz=None, conf=None, deskew=True, adaptive=False):
+    """Pipeline lengkap pada satu gambar BGR. Dipakai endpoint (adaptive=True) dan evaluate.py."""
     conf_pakai = CONF if conf is None else conf
     imgsz_pakai = imgsz or IMGSZ
     img_utama = apply_clahe(img) if clahe else img
     terbaik = _prediksi_satu(img_utama, conf_pakai, imgsz_pakai, deskew=deskew)
 
-    # Jika titik tidak terbaca atau keyakinan rata-rata di bawah 0.78 akibat bayangan HP,
-    # cahaya silau, atau kontras tipis, uji variasi normalisasi cahaya dan pilih hasil terbaik.
-    if terbaik["n_cells"] == 0 or terbaik["mean_conf"] < 0.78:
+    # Jika adaptive=True (dari aplikasi web) dan titik tidak terbaca atau keyakinan rata-rata
+    # di bawah 0.78 akibat bayangan HP, cahaya silau, atau kontras tipis, uji variasi normalisasi cahaya.
+    if adaptive and (terbaik["n_cells"] == 0 or terbaik["mean_conf"] < 0.78):
         kandidat_imgs = [
             img if clahe else apply_clahe(img),
             enhance_braille_lighting(img),
@@ -135,8 +135,6 @@ def jalankan(img, clahe=False, imgsz=None, conf=None, deskew=True):
             if skor_alt > skor_kini:
                 terbaik = alt
 
-        # Jika masih 0 sel dan conf memakai default, turunkan ambang deteksi ke 0.16
-        # untuk menangkap titik timbul berbayangan sangat tipis.
         if terbaik["n_cells"] == 0 and conf is None and conf_pakai > 0.16:
             for img_lemah in (enhance_braille_lighting(img), img):
                 alt_lemah = _prediksi_satu(img_lemah, 0.16, imgsz_pakai, deskew=deskew)
@@ -216,7 +214,7 @@ def translate_braille(
                 "message": "Gambar buram atau terlalu dekat",
             }
 
-        hasil = jalankan(img, clahe=clahe)
+        hasil = jalankan(img, clahe=clahe, adaptive=True)
         hasil.update({
             "status": "success",
             "image_width": img.shape[1],
@@ -372,7 +370,7 @@ def api_create_scan(
             "message": "Gambar kurang tajam atau kamera terlalu dekat. Tahan stabil lalu pindai ulang.",
         }
 
-    hasil = jalankan(img, clahe=clahe)
+    hasil = jalankan(img, clahe=clahe, adaptive=True)
     final_txt = override_final_text if isinstance(override_final_text, str) else hasil["final_text"]
     raw_txt = override_raw_text if isinstance(override_raw_text, str) else hasil["raw_text"]
 
