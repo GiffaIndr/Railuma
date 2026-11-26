@@ -4,6 +4,7 @@ export const useCamera = () => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
+  const activeDeviceIdRef = useRef(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState(null);
   const [facingMode, setFacingMode] = useState("environment");
@@ -28,7 +29,9 @@ export const useCamera = () => {
       return false;
     }
 
-    const targetFacing = preferredFacing || facingMode || "environment";
+    const targetFacing = typeof preferredFacing === "string" ? preferredFacing : (facingMode || "environment");
+    const isSwitching = typeof preferredFacing === "string" && Boolean(streamRef.current);
+    const prevDeviceId = activeDeviceIdRef.current;
 
     try {
       setCameraError(null);
@@ -36,10 +39,16 @@ export const useCamera = () => {
         streamRef.current.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
       }
+      if (isSwitching) {
+        // Beri jeda singkat agar sensor kamera HP melepas lock sebelum pindah depan/belakang
+        await new Promise((r) => setTimeout(r, 80));
+      }
 
       // Urutan fallback constraint kamera agar kompatibel di semua merek HP (Samsung, Xiaomi, iPhone, dll.)
       const candidateConstraints = [
         { video: { facingMode: { exact: targetFacing }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
+        { video: { facingMode: { exact: targetFacing }, width: { ideal: 1280 }, height: { ideal: 720 } } },
+        { video: { facingMode: { exact: targetFacing } } },
         { video: { facingMode: { ideal: targetFacing }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
         { video: { facingMode: { ideal: targetFacing }, width: { ideal: 1280 }, height: { ideal: 720 } } },
         { video: { facingMode: { ideal: targetFacing } } },
@@ -59,6 +68,37 @@ export const useCamera = () => {
         }
       }
 
+      // Jika sedang ganti kamera (depan <-> belakang) tetapi browser HP mengembalikan deviceId yang sama,
+      // cari kamera alternatif melalui enumerateDevices()
+      if (stream && isSwitching && prevDeviceId && navigator.mediaDevices?.enumerateDevices) {
+        try {
+          const curTrack = stream.getVideoTracks()[0];
+          const curId = curTrack?.getSettings?.()?.deviceId;
+          if (curId && curId === prevDeviceId) {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoInputs = devices.filter((d) => d.kind === "videoinput" && d.deviceId);
+            if (videoInputs.length > 1) {
+              const wantFront = targetFacing === "user";
+              const byLabel = videoInputs.find((d) =>
+                d.deviceId !== prevDeviceId &&
+                (wantFront
+                  ? /front|user|depan|selfie/i.test(d.label)
+                  : /back|rear|environment|belakang/i.test(d.label)),
+              );
+              const altDevice = byLabel || videoInputs.find((d) => d.deviceId !== prevDeviceId);
+              if (altDevice) {
+                stream.getTracks().forEach((t) => t.stop());
+                stream = await navigator.mediaDevices.getUserMedia({
+                  video: { deviceId: { exact: altDevice.deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+                });
+              }
+            }
+          }
+        } catch {
+          // tetap gunakan stream yang sudah didapat
+        }
+      }
+
       if (!stream) {
         console.error("Gagal membuka kamera:", lastErr);
         if (lastErr?.name === "NotAllowedError" || lastErr?.name === "PermissionDeniedError") {
@@ -70,6 +110,11 @@ export const useCamera = () => {
       }
 
       streamRef.current = stream;
+      try {
+        activeDeviceIdRef.current = stream.getVideoTracks()[0]?.getSettings?.()?.deviceId || null;
+      } catch {
+        activeDeviceIdRef.current = null;
+      }
 
       // Fokus otomatis terus-menerus bila didukung hardware kamera
       try {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Camera, CameraOff, CheckCircle2, Maximize2, Minimize2, Send, TriangleAlert } from "lucide-react";
+import { Camera, CameraOff, CheckCircle2, Maximize2, Minimize2, RotateCcw, Send, TriangleAlert } from "lucide-react";
 import { useCamera } from "../hooks/useCamera";
 import { getWsBaseUrl } from "../services/api";
 import { measureSharpness, sharpnessLabel, BLUR_MIN } from "../utils/blur";
@@ -11,8 +11,10 @@ export default function PhoneCameraClient({ token, onExit }) {
     canvasRef,
     isCameraActive,
     cameraError,
+    facingMode,
     startCamera,
     stopCamera,
+    switchCamera,
     captureFrame,
   } = useCamera();
   const [wsState, setWsState] = useState("connecting");
@@ -23,6 +25,24 @@ export default function PhoneCameraClient({ token, onExit }) {
   const [shutterFlash, setShutterFlash] = useState(false);
   const wsRef = useRef(null);
   const sendCaptureRef = useRef(null);
+  const switchCameraRef = useRef(null);
+
+  const handleFlipCamera = async () => {
+    const nextLabel = facingMode === "environment" ? "Kamera Depan" : "Kamera Belakang";
+    const ok = await switchCamera();
+    if (ok) {
+      setStatusMsg(`Beralih ke ${nextLabel}.`);
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "phone_camera_status",
+            active: true,
+            facingMode: facingMode === "environment" ? "user" : "environment",
+          }),
+        );
+      }
+    }
+  };
 
   // Mencegah layar HP mati otomatis saat kamera sedang aktif (Wake Lock API)
   useEffect(() => {
@@ -130,6 +150,7 @@ export default function PhoneCameraClient({ token, onExit }) {
 
   useEffect(() => {
     sendCaptureRef.current = sendCapture;
+    switchCameraRef.current = handleFlipCamera;
   });
 
   // Siarkan live feed kamera HP ke dasbor komputer secara berkala
@@ -219,6 +240,8 @@ export default function PhoneCameraClient({ token, onExit }) {
               if (msg.type === "pong") return;
               if (msg.type === "request_capture" && sendCaptureRef.current) {
                 await sendCaptureRef.current();
+              } else if (msg.type === "request_switch_camera" && switchCameraRef.current) {
+                await switchCameraRef.current();
               }
             }
           } catch {
@@ -299,26 +322,55 @@ export default function PhoneCameraClient({ token, onExit }) {
             <div className="fullscreen-hud-top">
               <span className="flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5 text-[0.8rem] font-bold text-[#E6FF2E] backdrop-blur-md border border-white/15">
                 <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-ping" />
-                <span>Kamera HP Layar Penuh</span>
+                <span>
+                  Kamera HP ({facingMode === "environment" ? "Belakang" : "Depan"})
+                </span>
               </span>
+              <div className="flex items-center gap-2">
+                {isCameraActive && (
+                  <button
+                    type="button"
+                    onClick={handleFlipCamera}
+                    aria-label="Ganti kamera depan atau belakang"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/75 text-white hover:bg-black/90 hover:text-[#E6FF2E] backdrop-blur-md border border-white/20 text-[0.8rem] font-bold transition-colors min-h-[40px]"
+                  >
+                    <RotateCcw size={15} aria-hidden="true" />
+                    <span>Balik Kamera</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={toggleFullscreen}
+                  className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/75 text-white hover:bg-black/90 hover:text-[#E6FF2E] backdrop-blur-md border border-white/20 text-[0.82rem] font-bold transition-colors min-h-[40px]"
+                >
+                  <Minimize2 size={16} aria-hidden="true" />
+                  <span>Keluar</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
+              {isCameraActive && (
+                <button
+                  type="button"
+                  onClick={handleFlipCamera}
+                  aria-label="Ganti kamera depan atau belakang"
+                  title="Ganti kamera depan / belakang"
+                  className="flex h-9 items-center gap-1.5 rounded-lg bg-black/65 px-2.5 text-[0.78rem] font-bold text-white hover:bg-black/85 hover:text-[#E6FF2E] backdrop-blur-sm border border-white/15 transition-all shadow-sm"
+                >
+                  <RotateCcw size={15} aria-hidden="true" />
+                  <span>{facingMode === "environment" ? "Depan" : "Belakang"}</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={toggleFullscreen}
-                className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/75 text-white hover:bg-black/90 hover:text-[#E6FF2E] backdrop-blur-md border border-white/20 text-[0.82rem] font-bold transition-colors min-h-[40px]"
+                aria-label="Layar penuh kamera"
+                className="flex h-9 w-9 items-center justify-center rounded-lg bg-black/60 text-white hover:bg-black/80 hover:text-[#E6FF2E] backdrop-blur-sm border border-white/15 transition-all shadow-sm"
               >
-                <Minimize2 size={16} aria-hidden="true" />
-                <span>Keluar</span>
+                <Maximize2 size={18} aria-hidden="true" />
               </button>
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={toggleFullscreen}
-              aria-label="Layar penuh kamera"
-              className="absolute top-3 right-3 z-20 flex h-9 w-9 items-center justify-center rounded-lg bg-black/60 text-white hover:bg-black/80 hover:text-[#E6FF2E] backdrop-blur-sm border border-white/15 transition-all shadow-sm"
-            >
-              <Maximize2 size={18} aria-hidden="true" />
-            </button>
           )}
 
           {/* Efek Kilat Shutter Kamera */}
@@ -374,8 +426,8 @@ export default function PhoneCameraClient({ token, onExit }) {
 
         <div className="flex flex-wrap gap-3">
           {!isCameraActive ? (
-            <button type="button" className="btn btn-primary flex-1" onClick={startCamera}>
-              <Camera size={20} aria-hidden="true" /> Nyalakan Kamera Belakang
+            <button type="button" className="btn btn-primary flex-1" onClick={() => startCamera()}>
+              <Camera size={20} aria-hidden="true" /> Nyalakan Kamera HP
             </button>
           ) : (
             <>
@@ -386,6 +438,17 @@ export default function PhoneCameraClient({ token, onExit }) {
                 disabled={wsState !== "connected"}
               >
                 <Send size={20} aria-hidden="true" /> Kirim Foto ke Dasbor
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleFlipCamera}
+                aria-label="Ganti kamera depan atau belakang"
+              >
+                <RotateCcw size={18} aria-hidden="true" />
+                <span>
+                  {facingMode === "environment" ? "Kamera Depan" : "Kamera Belakang"}
+                </span>
               </button>
               <button
                 type="button"

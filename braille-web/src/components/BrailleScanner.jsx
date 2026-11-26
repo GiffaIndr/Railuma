@@ -1195,6 +1195,16 @@ export default function BrailleScanner({
     }
   };
 
+  const handleRequestSwitchPhoneCamera = () => {
+    if (pairWsRef.current && pairWsRef.current.readyState === WebSocket.OPEN) {
+      pairWsRef.current.send(JSON.stringify({ type: "request_switch_camera" }));
+      announce("Meminta kamera HP berganti antara kamera depan dan belakang...");
+      toast.info("Mengganti kamera depan/belakang pada HP...");
+    } else {
+      announce("Kamera HP belum terhubung.");
+    }
+  };
+
   const handleCreateSession = async () => {
     const existingNums = sessionsRef.current.map((s) => {
       const m = /^Sesi\s+(\d+)$/i.exec((s.title || "").trim());
@@ -2730,26 +2740,90 @@ export default function BrailleScanner({
                   </span>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={toggleCameraFullscreen}
-                  className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/75 text-white hover:bg-black/90 hover:text-[#E6FF2E] backdrop-blur-md border border-white/20 text-[0.82rem] font-bold transition-colors min-h-[40px]"
-                >
-                  <Minimize2 size={16} aria-hidden="true" />
-                  <span>Keluar</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  {sourceMode === "phone" && pairPeers > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleRequestSwitchPhoneCamera}
+                      aria-label="Ganti kamera depan atau belakang HP"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/75 text-white hover:bg-black/90 hover:text-[#E6FF2E] backdrop-blur-md border border-white/20 text-[0.8rem] font-bold transition-colors min-h-[40px]"
+                    >
+                      <RotateCcw size={15} aria-hidden="true" />
+                      <span>Balik Kamera HP</span>
+                    </button>
+                  )}
+                  {sourceMode === "webcam" && isCameraActive && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        switchCamera();
+                        announce(
+                          facingMode === "environment"
+                            ? "Beralih ke kamera depan."
+                            : "Beralih ke kamera belakang.",
+                        );
+                      }}
+                      aria-label="Ganti kamera depan atau belakang"
+                      className="lg:hidden flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/75 text-white hover:bg-black/90 hover:text-[#E6FF2E] backdrop-blur-md border border-white/20 text-[0.8rem] font-bold transition-colors min-h-[40px]"
+                    >
+                      <RotateCcw size={15} aria-hidden="true" />
+                      <span>{facingMode === "environment" ? "Kamera Depan" : "Kamera Belakang"}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={toggleCameraFullscreen}
+                    className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/75 text-white hover:bg-black/90 hover:text-[#E6FF2E] backdrop-blur-md border border-white/20 text-[0.82rem] font-bold transition-colors min-h-[40px]"
+                  >
+                    <Minimize2 size={16} aria-hidden="true" />
+                    <span>Keluar</span>
+                  </button>
+                </div>
               </div>
             ) : (
               sourceMode !== "upload" && (
-                <button
-                  type="button"
-                  onClick={toggleCameraFullscreen}
-                  aria-label="Layar penuh kamera"
-                  title="Buka kamera layar penuh"
-                  className="absolute top-3 right-3 z-20 flex h-9 w-9 items-center justify-center rounded-lg bg-black/60 text-white hover:bg-black/80 hover:text-[#E6FF2E] backdrop-blur-sm border border-white/15 transition-all shadow-sm"
-                >
-                  <Maximize2 size={18} aria-hidden="true" />
-                </button>
+                <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
+                  {sourceMode === "phone" && pairPeers > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleRequestSwitchPhoneCamera}
+                      aria-label="Ganti kamera depan atau belakang HP"
+                      title="Ganti kamera depan / belakang HP"
+                      className="flex h-9 items-center gap-1.5 rounded-lg bg-black/65 px-2.5 text-[0.78rem] font-bold text-white hover:bg-black/85 hover:text-[#E6FF2E] backdrop-blur-sm border border-white/15 transition-all shadow-sm"
+                    >
+                      <RotateCcw size={15} aria-hidden="true" />
+                      <span>Balik Kamera HP</span>
+                    </button>
+                  )}
+                  {sourceMode === "webcam" && isCameraActive && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        switchCamera();
+                        announce(
+                          facingMode === "environment"
+                            ? "Beralih ke kamera depan."
+                            : "Beralih ke kamera belakang.",
+                        );
+                      }}
+                      aria-label="Ganti kamera depan atau belakang"
+                      title="Ganti kamera depan / belakang"
+                      className="lg:hidden flex h-9 items-center gap-1.5 rounded-lg bg-black/65 px-2.5 text-[0.78rem] font-bold text-white hover:bg-black/85 hover:text-[#E6FF2E] backdrop-blur-sm border border-white/15 transition-all shadow-sm"
+                    >
+                      <RotateCcw size={15} aria-hidden="true" />
+                      <span>{facingMode === "environment" ? "Kamera Depan" : "Kamera Belakang"}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={toggleCameraFullscreen}
+                    aria-label="Layar penuh kamera"
+                    title="Buka kamera layar penuh"
+                    className="flex h-9 w-9 items-center justify-center rounded-lg bg-black/60 text-white hover:bg-black/80 hover:text-[#E6FF2E] backdrop-blur-sm border border-white/15 transition-all shadow-sm"
+                  >
+                    <Maximize2 size={18} aria-hidden="true" />
+                  </button>
+                </div>
               )
             )}
 
@@ -3116,6 +3190,16 @@ export default function BrailleScanner({
                 <button
                   type="button"
                   className="btn btn-secondary"
+                  onClick={handleRequestSwitchPhoneCamera}
+                  disabled={pairPeers === 0}
+                  title="Ganti kamera depan / belakang pada HP yang sedang mirror"
+                >
+                  <RotateCcw size={16} aria-hidden="true" />
+                  <span>Balik Kamera HP</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
                   onClick={() => {
                     if (!pairToken) {
                       startPhonePairing();
@@ -3203,7 +3287,7 @@ export default function BrailleScanner({
 
                 <button
                   type="button"
-                  className="btn btn-secondary"
+                  className="btn btn-secondary lg:hidden"
                   onClick={() => {
                     switchCamera();
                     announce(
@@ -3215,7 +3299,7 @@ export default function BrailleScanner({
                   title="Putar kamera depan / belakang"
                 >
                   <RotateCcw size={16} aria-hidden="true" />
-                  <span className="hidden sm:inline">Putar Kamera</span>
+                  <span>{facingMode === "environment" ? "Kamera Depan" : "Kamera Belakang"}</span>
                 </button>
 
                 <button type="button" className="btn btn-secondary" onClick={handleTurnOffCamera}>

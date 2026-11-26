@@ -4,6 +4,7 @@ import {
   CameraOff,
   CheckCircle2,
   ClipboardCheck,
+  RotateCcw,
   TriangleAlert,
   Upload,
   Volume2,
@@ -21,8 +22,10 @@ export default function HomeworkCorrector() {
     canvasRef,
     isCameraActive,
     cameraError,
+    facingMode,
     startCamera,
     stopCamera,
+    switchCamera,
     captureFrame,
   } = useCamera();
   const { announce } = useA11y();
@@ -210,6 +213,26 @@ export default function HomeworkCorrector() {
               aria-label="Pratinjau kamera"
               className={`h-full w-full object-contain ${isCameraActive ? "block" : "hidden"}`}
             />
+            {isCameraActive && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  switchCamera();
+                  announce(
+                    facingMode === "environment"
+                      ? "Beralih ke kamera depan."
+                      : "Beralih ke kamera belakang.",
+                  );
+                }}
+                aria-label="Ganti kamera depan atau belakang"
+                title="Ganti kamera depan / belakang"
+                className="lg:hidden absolute top-3 right-3 z-20 flex h-9 items-center gap-1.5 rounded-lg bg-black/70 px-3 text-[0.78rem] font-bold text-white hover:bg-black/85 hover:text-[#E6FF2E] backdrop-blur-sm border border-white/15 transition-all shadow-sm"
+              >
+                <RotateCcw size={15} aria-hidden="true" />
+                <span>{facingMode === "environment" ? "Kamera Depan" : "Kamera Belakang"}</span>
+              </button>
+            )}
             {!isCameraActive && uploadedPreviewUrl && (
               <div className="relative flex h-full w-full items-center justify-center">
                 <img
@@ -246,17 +269,35 @@ export default function HomeworkCorrector() {
 
           <div className="flex flex-wrap gap-2.5">
             {isCameraActive ? (
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => {
-                  stopCamera();
-                  announce("Kamera dimatikan.");
-                }}
-              >
-                <CameraOff size={18} aria-hidden="true" />
-                <span>Matikan Kamera</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    stopCamera();
+                    announce("Kamera dimatikan.");
+                  }}
+                >
+                  <CameraOff size={18} aria-hidden="true" />
+                  <span>Matikan Kamera</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary lg:hidden"
+                  onClick={() => {
+                    switchCamera();
+                    announce(
+                      facingMode === "environment"
+                        ? "Beralih ke kamera depan."
+                        : "Beralih ke kamera belakang.",
+                    );
+                  }}
+                  aria-label="Ganti kamera depan atau belakang"
+                >
+                  <RotateCcw size={17} aria-hidden="true" />
+                  <span>{facingMode === "environment" ? "Kamera Depan" : "Kamera Belakang"}</span>
+                </button>
+              </>
             ) : (
               <button
                 type="button"
