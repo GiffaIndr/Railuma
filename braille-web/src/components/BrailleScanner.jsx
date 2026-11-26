@@ -390,10 +390,23 @@ export default function BrailleScanner({
   }, [announce]);
 
   const overlayCanvasRef = useRef(null);
+  const phoneImgRef = useRef(null);
   const fileInputRef = useRef(null);
   const wsLiveRef = useRef(null);
   const wsBusyRef = useRef(false);
   const stabRef = useRef(createStabilizer(5, 2));
+  const scanModeRef = useRef(scanMode);
+  scanModeRef.current = scanMode;
+
+  const capturePhoneStreamBlob = useCallback(() => {
+    const imgEl = phoneImgRef.current;
+    if (!imgEl || !imgEl.naturalWidth || !imgEl.naturalHeight) return Promise.resolve(null);
+    const c = document.createElement("canvas");
+    c.width = imgEl.naturalWidth;
+    c.height = imgEl.naturalHeight;
+    c.getContext("2d").drawImage(imgEl, 0, 0, c.width, c.height);
+    return new Promise((resolve) => c.toBlob((blob) => resolve(blob), "image/jpeg", 0.9));
+  }, []);
 
   const switchSubView = (target) => {
     if (onChangeSubView) {
@@ -592,13 +605,13 @@ export default function BrailleScanner({
     loadActiveSessionDetail(activeSessionId);
   }, [activeSessionId, loadActiveSessionDetail]);
 
-  // Gambar overlay poligon di atas elemen <video>
+  // Gambar overlay poligon di atas elemen <video> atau <img ref={phoneImgRef}> (Mirror HP)
   useEffect(() => {
     const canvas = overlayCanvasRef.current;
-    const video = videoRef.current;
-    if (!canvas || !video) return;
+    const mediaEl = sourceMode === "phone" ? phoneImgRef.current : videoRef.current;
+    if (!canvas || !mediaEl) return;
     const ctx = canvas.getContext("2d");
-    const rect = video.getBoundingClientRect();
+    const rect = mediaEl.getBoundingClientRect();
     const cw = Math.max(1, Math.round(rect.width));
     const ch = Math.max(1, Math.round(rect.height));
     if (canvas.width !== cw || canvas.height !== ch) {
@@ -607,13 +620,8 @@ export default function BrailleScanner({
     }
     ctx.clearRect(0, 0, cw, ch);
 
-    if (!isCameraActive || livePolygons.length === 0) return;
-
-    const iw = liveImageSize.w || video.videoWidth || 1280;
-    const ih = liveImageSize.h || video.videoHeight || 720;
-    const scale = Math.min(cw / iw, ch / ih);
-    const offsetX = (cw - iw * scale) / 2;
-    const offsetY = (ch - ih * scale) / 2;
+    const mediaActive = sourceMode === "phone" ? Boolean(phoneStreamUrl) : isCameraActive;
+    if (!mediaActive) return;
 
     if (scanMode === "sentence") {
       const bandTop = ch * 0.32;
@@ -625,6 +633,14 @@ export default function BrailleScanner({
       ctx.strokeRect(16, bandTop, cw - 32, bandH);
       ctx.restore();
     }
+
+    if (livePolygons.length === 0) return;
+
+    const iw = liveImageSize.w || mediaEl.videoWidth || mediaEl.naturalWidth || 1280;
+    const ih = liveImageSize.h || mediaEl.videoHeight || mediaEl.naturalHeight || 720;
+    const scale = Math.min(cw / iw, ch / ih);
+    const offsetX = (cw - iw * scale) / 2;
+    const offsetY = (ch - ih * scale) / 2;
 
     livePolygons.forEach((cell) => {
       const pts = cell.polygon || [
@@ -669,10 +685,15 @@ export default function BrailleScanner({
       ctx.fillText(labelTxt, lx + 3, ly - 2);
       ctx.restore();
     });
-  }, [livePolygons, liveImageSize, isCameraActive, scanMode, videoRef]);
+  }, [livePolygons, liveImageSize, isCameraActive, phoneStreamUrl, sourceMode, scanMode, videoRef]);
 
   useEffect(() => {
-    if (!liveStreaming || !isCameraActive) {
+    const canStreamLive =
+      liveStreaming &&
+      scanMode === "live" &&
+      ((sourceMode === "webcam" && isCameraActive) || (sourceMode === "phone" && phoneCameraActive));
+
+    if (!canStreamLive) {
       if (wsLiveRef.current) {
         wsLiveRef.current.close();
         wsLiveRef.current = null;
@@ -723,6 +744,16 @@ export default function BrailleScanner({
               sharpness: data.quality?.sharpness ?? 0,
               timestamp: Date.now(),
             };
+            if (sourceMode === "phone" && pairWsRef.current?.readyState === WebSocket.OPEN) {
+              pairWsRef.current.send(
+                JSON.stringify({
+                  type: "live_overlay_update",
+                  text: voted.text,
+                  cellCount: (data.cells || []).length,
+                  confirmed: voted.confirmed,
+                }),
+              );
+            }
           }
         }
       } catch (e) {
@@ -737,12 +768,15 @@ export default function BrailleScanner({
     const interval = setInterval(async () => {
       if (!wsLiveRef.current || wsLiveRef.current.readyState !== WebSocket.OPEN) return;
       if (wsBusyRef.current) return;
-      const s = measureSharpness(videoRef.current);
+      const targetEl = sourceMode === "phone" ? phoneImgRef.current : videoRef.current;
+      if (!targetEl) return;
+      const s = measureSharpness(targetEl);
       setSharp(s.variance);
       if (s.ready && s.isBlurry) return;
 
       wsBusyRef.current = true;
-      const blob = await captureFrame();
+      const blob =
+        sourceMode === "phone" ? await capturePhoneStreamBlob() : await captureFrame();
       if (!blob) {
         wsBusyRef.current = false;
         return;
@@ -760,7 +794,7 @@ export default function BrailleScanner({
       ws.close();
       wsLiveRef.current = null;
     };
-  }, [liveStreaming, isCameraActive, captureFrame, videoRef]);
+  }, [liveStreaming, scanMode, sourceMode, isCameraActive, phoneCameraActive, captureFrame, capturePhoneStreamBlob, videoRef]);
 
   const handleTurnOnCamera = async () => {
     const ok = await startCamera();
@@ -837,7 +871,7 @@ export default function BrailleScanner({
     // JALUR INSTAN 0ms PADA MODE LIVE: jika di layar live sudah ada hasil bacaan, langsung tampilkan ke panel kanan tanpa menunggu request ulang!
     if (
       scanMode === "live" &&
-      customSource === "webcam" &&
+      (customSource === "webcam" || customSource === "phone") &&
       (livePreviewText?.trim() || lastValidLiveResultRef.current?.final_text)
     ) {
       const liveSnap = lastValidLiveResultRef.current || {};
@@ -1164,12 +1198,17 @@ export default function BrailleScanner({
               setPhoneCameraActive(Boolean(msg.active));
               if (!msg.active) {
                 setPhoneStreamUrl(null);
+              } else if (scanModeRef.current === "live") {
+                setLiveStreaming(true);
               }
             } else if (msg.type === "phone_stream_frame") {
               if (msg.image) {
                 setPhoneStreamUrl(msg.image);
                 setPhoneCameraActive(true);
               }
+            } else if (msg.type === "sync_scan_mode" && msg.scanMode) {
+              setScanMode(msg.scanMode);
+              setLiveStreaming(msg.scanMode === "live");
             }
           } catch {
             // abaikan pesan transien
@@ -1186,10 +1225,28 @@ export default function BrailleScanner({
     }
   };
 
-  const handleRequestCaptureFromPhone = () => {
+  const handleRequestCaptureFromPhone = async () => {
+    // Jika mode Live di Mirror HP sudah memiliki bacaan stabil di layar, langsung tangkap ke panel kanan dalam 0ms!
+    if (
+      scanMode === "live" &&
+      phoneStreamUrl &&
+      (livePreviewText?.trim() || lastValidLiveResultRef.current?.final_text)
+    ) {
+      const liveBlob = await capturePhoneStreamBlob();
+      if (liveBlob) {
+        await executeSingleOrFreezeScan(liveBlob, "phone");
+        return;
+      }
+    }
     if (pairWsRef.current && pairWsRef.current.readyState === WebSocket.OPEN) {
-      pairWsRef.current.send(JSON.stringify({ type: "request_capture" }));
-      announce("Meminta kamera HP mengambil gambar...");
+      pairWsRef.current.send(JSON.stringify({ type: "request_capture", scanMode }));
+      announce(
+        scanMode === "sentence"
+          ? "Meminta kamera HP mengambil rangkaian 3 frame kalimat..."
+          : scanMode === "photo"
+            ? "Meminta kamera HP mengambil foto presisi..."
+            : "Meminta kamera HP mengambil frame...",
+      );
     } else {
       announce("Kamera HP belum terhubung.");
     }
@@ -2587,7 +2644,7 @@ export default function BrailleScanner({
                     aria-pressed={sourceMode === "phone"}
                     onClick={() => {
                       setSourceMode("phone");
-                      setLiveStreaming(false);
+                      if (scanMode === "live") setLiveStreaming(true);
                       if (!pairToken) startPhonePairing();
                       announce("Sumber Mirror Kamera HP dipilih.");
                     }}
@@ -2637,8 +2694,13 @@ export default function BrailleScanner({
                       aria-pressed={scanMode === m.id}
                       onClick={() => {
                         setScanMode(m.id);
-                        if (m.id === "live" && isCameraActive) setLiveStreaming(true);
+                        if (m.id === "live" && (isCameraActive || (sourceMode === "phone" && phoneCameraActive))) {
+                          setLiveStreaming(true);
+                        }
                         if (m.id !== "live") setLiveStreaming(false);
+                        if (pairWsRef.current?.readyState === WebSocket.OPEN) {
+                          pairWsRef.current.send(JSON.stringify({ type: "sync_scan_mode", scanMode: m.id }));
+                        }
                         announce(`Mode ${m.label} dipilih.`);
                       }}
                       className="segmented-item flex-1 sm:flex-none text-center"
@@ -2680,7 +2742,7 @@ export default function BrailleScanner({
             </h2>
 
             <div className="flex items-center gap-2">
-              {liveStreaming && liveLatencyMs > 0 && sourceMode === "webcam" && (
+              {liveStreaming && liveLatencyMs > 0 && (sourceMode === "webcam" || sourceMode === "phone") && (
                 <span className="text-[0.78rem] font-semibold text-muted-theme tabular-nums">
                   {liveLatencyMs} ms
                 </span>
@@ -2893,6 +2955,7 @@ export default function BrailleScanner({
                 {phoneStreamUrl ? (
                   <>
                     <img
+                      ref={phoneImgRef}
                       src={phoneStreamUrl}
                       alt="Pratinjau langsung kamera HP"
                       className={
@@ -2901,16 +2964,36 @@ export default function BrailleScanner({
                           : "h-full w-full object-contain"
                       }
                     />
+                    <canvas
+                      ref={overlayCanvasRef}
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0 h-full w-full block"
+                    />
                     {!isCameraFullscreen && (
                       <div
                         aria-hidden="true"
                         className="absolute top-3 left-3 z-10 flex items-center gap-2 rounded-full bg-black/75 px-3 py-1 text-[0.78rem] font-bold text-[#E6FF2E] backdrop-blur-sm shadow-sm"
                       >
                         <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-ping" />
-                        <span>Live Mirror Kamera HP</span>
+                        <span>
+                          Mirror Kamera HP · {scanMode === "sentence" ? "Kalimat" : scanMode === "photo" ? "Foto Presisi" : "Live"}
+                        </span>
                       </div>
                     )}
                     <div className="scanner-sweep-line" aria-hidden="true" />
+                    {!isCameraFullscreen && scanMode === "live" && livePreviewText && (
+                      <div
+                        aria-hidden="true"
+                        className="absolute bottom-3 left-3 right-3 z-10 flex items-center justify-between gap-3 rounded-[10px] bg-black/65 px-4 py-2.5 backdrop-blur-md text-white"
+                      >
+                        <span className="truncate text-[0.94rem] font-bold">
+                          {livePreviewText}
+                        </span>
+                        <span className="flex-none text-[0.78rem] font-semibold text-[#E6FF2E] tabular-nums">
+                          {livePolygons.length} sel {liveConfirmed ? "· stabil" : ""}
+                        </span>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="flex flex-col items-center justify-center gap-3 px-5 py-6 text-center z-10 max-w-[440px]">
@@ -3099,6 +3182,9 @@ export default function BrailleScanner({
                       onClick={() => {
                         setScanMode("live");
                         setLiveStreaming(true);
+                        if (pairWsRef.current?.readyState === WebSocket.OPEN) {
+                          pairWsRef.current.send(JSON.stringify({ type: "sync_scan_mode", scanMode: "live" }));
+                        }
                         announce("Mode Live");
                       }}
                       className={`px-3 py-1.5 rounded-full text-[0.78rem] font-bold transition-all whitespace-nowrap ${
@@ -3114,6 +3200,9 @@ export default function BrailleScanner({
                       onClick={() => {
                         setScanMode("sentence");
                         setLiveStreaming(false);
+                        if (pairWsRef.current?.readyState === WebSocket.OPEN) {
+                          pairWsRef.current.send(JSON.stringify({ type: "sync_scan_mode", scanMode: "sentence" }));
+                        }
                         announce("Mode Kalimat");
                       }}
                       className={`px-3 py-1.5 rounded-full text-[0.78rem] font-bold transition-all whitespace-nowrap ${
@@ -3129,6 +3218,9 @@ export default function BrailleScanner({
                       onClick={() => {
                         setScanMode("photo");
                         setLiveStreaming(false);
+                        if (pairWsRef.current?.readyState === WebSocket.OPEN) {
+                          pairWsRef.current.send(JSON.stringify({ type: "sync_scan_mode", scanMode: "photo" }));
+                        }
                         announce("Mode Foto Presisi");
                       }}
                       className={`px-3 py-1.5 rounded-full text-[0.78rem] font-bold transition-all whitespace-nowrap ${
@@ -3178,15 +3270,28 @@ export default function BrailleScanner({
                   onClick={handleRequestCaptureFromPhone}
                   disabled={pairPeers === 0 || status === "loading"}
                 >
-                  <Camera size={18} aria-hidden="true" />
+                  <Check size={18} aria-hidden="true" />
                   <span>
                     {status === "loading"
                       ? "Memproses foto..."
                       : pairPeers === 0
                         ? "Menunggu HP Terhubung..."
-                        : "Tangkap dari Mirror HP"}
+                        : scanMode === "sentence"
+                          ? "Tangkap Kalimat (Burst 3 Frame)"
+                          : scanMode === "photo"
+                            ? "Tangkap Foto Presisi"
+                            : "Tangkap Frame Ini"}
                   </span>
                 </button>
+                {scanMode === "live" && pairPeers > 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setLiveStreaming((v) => !v)}
+                  >
+                    {liveStreaming ? "Jeda Live" : "Lanjutkan Live"}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn btn-secondary"

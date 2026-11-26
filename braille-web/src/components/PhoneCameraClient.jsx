@@ -23,9 +23,24 @@ export default function PhoneCameraClient({ token, onExit }) {
   const [statusMsg, setStatusMsg] = useState("Menghubungkan ke dasbor komputer...");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [shutterFlash, setShutterFlash] = useState(false);
+  const [scanMode, setScanMode] = useState("live");
+  const [burstProgress, setBurstProgress] = useState(0);
+  const [livePreviewText, setLivePreviewText] = useState("");
+  const [liveCellCount, setLiveCellCount] = useState(0);
+  const [liveConfirmed, setLiveConfirmed] = useState(false);
   const wsRef = useRef(null);
   const sendCaptureRef = useRef(null);
   const switchCameraRef = useRef(null);
+
+  const handleSelectScanMode = (nextMode) => {
+    setScanMode(nextMode);
+    const label =
+      nextMode === "sentence" ? "Kalimat (Burst 3 Frame)" : nextMode === "photo" ? "Foto Presisi" : "Live";
+    setStatusMsg(`Mode ${label} aktif.`);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "sync_scan_mode", scanMode: nextMode }));
+    }
+  };
 
   const handleFlipCamera = async () => {
     const nextLabel = facingMode === "environment" ? "Kamera Depan" : "Kamera Belakang";
@@ -121,23 +136,58 @@ export default function PhoneCameraClient({ token, onExit }) {
     });
   };
 
-  const sendCapture = async () => {
+  const sendCapture = async (requestedMode = null) => {
+    const activeMode = typeof requestedMode === "string" ? requestedMode : scanMode;
     if (!isCameraActive) {
       setStatusMsg("Nyalakan kamera terlebih dahulu.");
       return;
     }
-    const s = measureSharpness(videoRef.current);
-    setSharp(s.variance);
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      setStatusMsg("Gagal mengirim foto. Pastikan koneksi ke dasbor masih aktif.");
+      return;
+    }
 
-    // Efek visual flash, audio, dan getar saat tombol capture ditekan
-    setShutterFlash(true);
-    setTimeout(() => setShutterFlash(false), 120);
-    playShutterSound();
+    let blob = null;
+    let bestVariance = 0;
+
+    if (activeMode === "sentence") {
+      // Mode Kalimat: Ambil 3 frame beruntun dan pilih yang paling tajam
+      const candidates = [];
+      for (let i = 0; i < 3; i++) {
+        setBurstProgress(i + 1);
+        setStatusMsg(`Mengambil rangkaian kalimat (${i + 1}/3)... Tahan HP tetap stabil.`);
+        setShutterFlash(true);
+        setTimeout(() => setShutterFlash(false), 90);
+        playShutterSound();
+        const s = measureSharpness(videoRef.current);
+        const b = await captureFrame();
+        if (b) {
+          candidates.push({ blob: b, variance: s.variance });
+        }
+        if (i < 2) {
+          await new Promise((r) => setTimeout(r, 240));
+        }
+      }
+      setBurstProgress(0);
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => b.variance - a.variance);
+        blob = candidates[0].blob;
+        bestVariance = candidates[0].variance;
+      }
+    } else {
+      const s = measureSharpness(videoRef.current);
+      bestVariance = s.variance;
+      setShutterFlash(true);
+      setTimeout(() => setShutterFlash(false), 120);
+      playShutterSound();
+      blob = await captureFrame();
+    }
+
+    setSharp(bestVariance);
     if (typeof navigator !== "undefined" && navigator.vibrate) {
       navigator.vibrate(50);
     }
 
-    const blob = await captureFrame();
     if (!blob || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       setStatusMsg("Gagal mengirim foto. Pastikan koneksi ke dasbor masih aktif.");
       return;
@@ -145,7 +195,9 @@ export default function PhoneCameraClient({ token, onExit }) {
     const buf = await blob.arrayBuffer();
     wsRef.current.send(buf);
     setSentCount((n) => n + 1);
-    setStatusMsg(`Foto #${sentCount + 1} terkirim ke dasbor (Ketajaman: ${s.variance}).`);
+    const modeLabel =
+      activeMode === "sentence" ? "Kalimat Burst" : activeMode === "photo" ? "Foto Presisi" : "Frame Live";
+    setStatusMsg(`${modeLabel} #${sentCount + 1} terkirim ke dasbor (Ketajaman: ${bestVariance}).`);
   };
 
   useEffect(() => {
@@ -239,9 +291,16 @@ export default function PhoneCameraClient({ token, onExit }) {
               const msg = JSON.parse(ev.data);
               if (msg.type === "pong") return;
               if (msg.type === "request_capture" && sendCaptureRef.current) {
-                await sendCaptureRef.current();
+                if (msg.scanMode) setScanMode(msg.scanMode);
+                await sendCaptureRef.current(msg.scanMode || null);
               } else if (msg.type === "request_switch_camera" && switchCameraRef.current) {
                 await switchCameraRef.current();
+              } else if (msg.type === "sync_scan_mode" && msg.scanMode) {
+                setScanMode(msg.scanMode);
+              } else if (msg.type === "live_overlay_update") {
+                setLivePreviewText(msg.text || "");
+                setLiveCellCount(msg.cellCount || 0);
+                setLiveConfirmed(Boolean(msg.confirmed));
               }
             }
           } catch {
@@ -311,6 +370,32 @@ export default function PhoneCameraClient({ token, onExit }) {
       </div>
 
       <div className="card flex flex-col gap-4">
+        {/* Pilihan Mode Pemindaian Kamera HP: Live, Kalimat, Foto Presisi */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[0.82rem] font-bold text-muted-theme">Mode Kamera:</span>
+          <div
+            className="segmented-bar flex-1 sm:flex-none flex flex-nowrap overflow-x-auto no-scrollbar"
+            role="group"
+            aria-label="Pilih mode pemindaian kamera HP"
+          >
+            {[
+              { id: "live", label: "Live" },
+              { id: "sentence", label: "Kalimat" },
+              { id: "photo", label: "Foto Presisi" },
+            ].map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                aria-pressed={scanMode === m.id}
+                onClick={() => handleSelectScanMode(m.id)}
+                className="segmented-item flex-1 sm:flex-none text-center"
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div
           className={
             isFullscreen
@@ -401,17 +486,64 @@ export default function PhoneCameraClient({ token, onExit }) {
             </span>
           )}
 
+          {!isFullscreen && isCameraActive && scanMode === "live" && livePreviewText && (
+            <div
+              aria-hidden="true"
+              className="absolute bottom-3 left-3 right-3 z-10 flex items-center justify-between gap-3 rounded-[10px] bg-black/70 px-4 py-2.5 backdrop-blur-md text-white"
+            >
+              <span className="truncate text-[0.92rem] font-bold">{livePreviewText}</span>
+              <span className="flex-none text-[0.78rem] font-semibold text-[#E6FF2E] tabular-nums">
+                {liveCellCount} sel {liveConfirmed ? "· stabil" : ""}
+              </span>
+            </div>
+          )}
+
           {isFullscreen && isCameraActive && (
             <div className="fullscreen-hud-bottom">
-              <button
-                type="button"
-                onClick={sendCapture}
-                disabled={wsState !== "connected"}
-                aria-label="Kirim Foto ke Komputer"
-                className="flex h-[72px] w-[72px] items-center justify-center rounded-full bg-[#E6FF2E] text-[#0A1628] shadow-[0_0_24px_rgba(230,255,46,0.35)] active:scale-95 transition-all border-4 border-white/40 disabled:opacity-50"
-              >
-                <Send size={28} strokeWidth={2.4} aria-hidden="true" />
-              </button>
+              {scanMode === "live" && livePreviewText && (
+                <div
+                  aria-hidden="true"
+                  className="w-full max-w-md flex items-center justify-between gap-3 rounded-xl bg-black/80 px-4 py-2.5 backdrop-blur-md text-white border border-white/20 shadow-2xl"
+                >
+                  <span className="truncate text-[0.95rem] font-bold">{livePreviewText}</span>
+                  <span className="flex-none text-[0.8rem] font-semibold text-[#E6FF2E] tabular-nums">
+                    {liveCellCount} sel {liveConfirmed ? "· stabil" : ""}
+                  </span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-center gap-3 sm:gap-5 w-full max-w-md">
+                <div className="flex items-center gap-1 bg-black/70 p-1.5 rounded-full backdrop-blur-md border border-white/20">
+                  {[
+                    { id: "live", label: "Live" },
+                    { id: "sentence", label: "Kalimat" },
+                    { id: "photo", label: "Foto Presisi" },
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => handleSelectScanMode(m.id)}
+                      className={`px-3 py-1.5 rounded-full text-[0.78rem] font-bold transition-all whitespace-nowrap ${
+                        scanMode === m.id
+                          ? "bg-[#E6FF2E] text-[#0A1628]"
+                          : "text-white/80 hover:text-white"
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => sendCapture()}
+                  disabled={wsState !== "connected" || burstProgress > 0}
+                  aria-label="Kirim Foto ke Komputer"
+                  className="flex h-[66px] w-[66px] flex-none items-center justify-center rounded-full bg-[#E6FF2E] text-[#0A1628] shadow-[0_0_24px_rgba(230,255,46,0.35)] active:scale-95 transition-all border-4 border-white/40 disabled:opacity-50"
+                >
+                  <Send size={26} strokeWidth={2.4} aria-hidden="true" />
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -434,10 +566,19 @@ export default function PhoneCameraClient({ token, onExit }) {
               <button
                 type="button"
                 className="btn btn-primary flex-1"
-                onClick={sendCapture}
-                disabled={wsState !== "connected"}
+                onClick={() => sendCapture()}
+                disabled={wsState !== "connected" || burstProgress > 0}
               >
-                <Send size={20} aria-hidden="true" /> Kirim Foto ke Dasbor
+                <Send size={20} aria-hidden="true" />
+                <span>
+                  {burstProgress > 0
+                    ? `Menangkap Frame ${burstProgress}/3...`
+                    : scanMode === "sentence"
+                      ? "Tangkap Kalimat (Burst 3 Frame)"
+                      : scanMode === "photo"
+                        ? "Tangkap Foto Presisi"
+                        : "Tangkap Frame Ini"}
+                </span>
               </button>
               <button
                 type="button"
