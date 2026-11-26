@@ -186,7 +186,7 @@ export default function BrailleScanner({
   const [pairToken, setPairToken] = useState("");
   const [pairPeers, setPairPeers] = useState(0);
   const [phoneStreamUrl, setPhoneStreamUrl] = useState(null);
-  const [, setPhoneCameraActive] = useState(false);
+  const [phoneCameraActive, setPhoneCameraActive] = useState(false);
   const pairWsRef = useRef(null);
   const pairPingRef = useRef(null);
 
