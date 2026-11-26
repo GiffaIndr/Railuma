@@ -19,6 +19,7 @@ import {
   Minimize2,
   Pin,
   Plus,
+  QrCode,
   RefreshCw,
   RotateCcw,
   Search,
@@ -31,6 +32,7 @@ import {
   Volume2,
   X,
 } from "lucide-react";
+import QRCode from "qrcode";
 import { useCamera } from "../hooks/useCamera";
 import { useA11y } from "../context/useA11y";
 import {
@@ -1815,6 +1817,34 @@ export default function BrailleScanner({
     ? `${window.location.origin}${window.location.pathname}?pair=${encodeURIComponent(pairToken)}`
     : "";
 
+  const [pairQrDataUrl, setPairQrDataUrl] = useState("");
+  const [showQrOverlay, setShowQrOverlay] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    if (!pairUrl) {
+      setPairQrDataUrl("");
+      return undefined;
+    }
+    QRCode.toDataURL(pairUrl, {
+      width: 220,
+      margin: 1,
+      color: {
+        dark: "#0B1C33",
+        light: "#FFFFFF",
+      },
+    })
+      .then((url) => {
+        if (active) setPairQrDataUrl(url);
+      })
+      .catch(() => {
+        if (active) setPairQrDataUrl("");
+      });
+    return () => {
+      active = false;
+    };
+  }, [pairUrl]);
+
   const sessionItems = activeSession?.items || [];
   const selectedCells = selectedItem?.cells_json || [];
   const reviewCellsCount = selectedCells.filter(
@@ -2994,33 +3024,73 @@ export default function BrailleScanner({
                         </span>
                       </div>
                     )}
+                    {showQrOverlay && pairQrDataUrl && (
+                      <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/80 p-4 backdrop-blur-sm">
+                        <div className="flex flex-col items-center gap-2 rounded-2xl bg-white p-4 shadow-2xl border-2 border-[#E6FF2E]">
+                          <img
+                            src={pairQrDataUrl}
+                            alt="Kode QR Mirror Kamera HP"
+                            width={180}
+                            height={180}
+                            className="h-[180px] w-[180px] object-contain"
+                          />
+                          <span className="text-[0.78rem] font-bold text-[#0B1C33]">
+                            Pindai QR untuk menyambungkan HP
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowQrOverlay(false)}
+                          className="btn btn-secondary btn-sm !bg-white !text-[#0B1C33] font-bold"
+                        >
+                          <X size={15} aria-hidden="true" />
+                          <span>Tutup Kode QR</span>
+                        </button>
+                      </div>
+                    )}
                   </>
                 ) : (
-                  <div className="flex flex-col items-center justify-center gap-3 px-5 py-6 text-center z-10 max-w-[440px]">
-                    <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 text-[#E6FF2E]">
-                      <Smartphone size={24} aria-hidden="true" />
-                    </span>
+                  <div className="flex flex-col items-center justify-center gap-3 px-5 py-4 text-center z-10 max-w-[460px]">
                     <div className="flex flex-col gap-1">
                       <span className="text-[1.04rem] font-bold text-white">
                         {pairPeers > 0
                           ? "HP Terhubung · Siap Mirror Kamera"
-                          : "Mirror Kamera Belakang HP ke Laptop Ini"}
+                          : "Scan QR dengan Kamera HP untuk Mirror Langsung"}
                       </span>
                       <span className="text-[0.8rem] leading-relaxed text-white/75">
                         {pairPeers > 0
                           ? "Nyalakan kamera pada halaman di HP Anda untuk menampilkan pratinjau langsung di layar ini."
-                          : "Fitur ini berguna saat Anda membuka Railuma di Laptop dan ingin memakai kamera belakang HP untuk memotret lembar Braille di meja."}
+                          : "Arahkan kamera HP Anda ke kode QR di bawah ini untuk langsung membuka kamera belakang HP tanpa perlu menyalin tautan."}
                       </span>
                     </div>
 
-                    <div className="w-full flex flex-col gap-2 rounded-xl bg-black/55 p-3 border border-white/15">
+                    {pairQrDataUrl ? (
+                      <div className="flex flex-col items-center gap-1.5 rounded-2xl bg-white p-3 shadow-xl border-2 border-[#E6FF2E]">
+                        <img
+                          src={pairQrDataUrl}
+                          alt="Kode QR untuk menghubungkan Mirror Kamera HP"
+                          width={168}
+                          height={168}
+                          className="h-[168px] w-[168px] rounded-lg object-contain"
+                        />
+                        <span className="text-[0.73rem] font-bold text-[#0B1C33]">
+                          Pindai QR ini dari HP Anda
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex h-[168px] w-[168px] items-center justify-center rounded-2xl bg-white/10 text-white/80 text-[0.8rem] font-semibold border border-white/15">
+                        Membuat Kode QR...
+                      </div>
+                    )}
+
+                    <div className="w-full flex flex-col gap-2 rounded-xl bg-black/55 p-2.5 border border-white/15">
                       <div className="flex items-center gap-2">
                         <input
                           type="text"
                           readOnly
                           aria-label="Tautan mirror kamera HP"
                           value={pairUrl || "Membuat tautan penyandingan..."}
-                          className="w-full rounded-lg border border-white/20 bg-white/10 px-2.5 py-1.5 text-[0.78rem] text-white font-mono truncate"
+                          className="w-full rounded-lg border border-white/20 bg-white/10 px-2.5 py-1.5 text-[0.76rem] text-white font-mono truncate"
                         />
                         <button
                           type="button"
@@ -3035,7 +3105,7 @@ export default function BrailleScanner({
                       <button
                         type="button"
                         onClick={() => setSourceMode("webcam")}
-                        className="border-0 bg-transparent p-0 text-[0.75rem] font-semibold text-[#E6FF2E] hover:underline cursor-pointer"
+                        className="border-0 bg-transparent p-0 text-[0.74rem] font-semibold text-[#E6FF2E] hover:underline cursor-pointer"
                       >
                         Sedang membuka langsung di HP? Klik di sini untuk memakai Kamera Perangkat langsung.
                       </button>
@@ -3302,6 +3372,17 @@ export default function BrailleScanner({
                   <RotateCcw size={16} aria-hidden="true" />
                   <span>Balik Kamera HP</span>
                 </button>
+                {phoneStreamUrl && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setShowQrOverlay((v) => !v)}
+                    title="Tampilkan Kode QR penyandingan HP"
+                  >
+                    <QrCode size={16} aria-hidden="true" />
+                    <span>{showQrOverlay ? "Tutup QR" : "Kode QR"}</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn btn-secondary"
