@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, CameraOff, CheckCircle2, Maximize2, Minimize2, RotateCcw, Send, TriangleAlert } from "lucide-react";
 import { useCamera } from "../hooks/useCamera";
-import { getWsBaseUrl } from "../services/api";
+import { getWsBaseUrl, isClaheOn } from "../services/api";
 import { measureSharpness, sharpnessLabel, BLUR_MIN } from "../utils/blur";
+import { createStabilizer } from "../utils/stabilizer";
 
 // Tampilan kamera ringan untuk HP saat membuka URL ?pair=<token>
 export default function PhoneCameraClient({ token, onExit }) {
@@ -28,7 +29,13 @@ export default function PhoneCameraClient({ token, onExit }) {
   const [livePreviewText, setLivePreviewText] = useState("");
   const [liveCellCount, setLiveCellCount] = useState(0);
   const [liveConfirmed, setLiveConfirmed] = useState(false);
+  const [livePolygons, setLivePolygons] = useState([]);
+  const [liveImageSize, setLiveImageSize] = useState({ w: 1280, h: 720 });
   const wsRef = useRef(null);
+  const wsLiveRef = useRef(null);
+  const wsLiveBusyRef = useRef(false);
+  const overlayCanvasRef = useRef(null);
+  const stabRef = useRef(createStabilizer(5, 2));
   const sendCaptureRef = useRef(null);
   const switchCameraRef = useRef(null);
 
@@ -205,7 +212,7 @@ export default function PhoneCameraClient({ token, onExit }) {
     switchCameraRef.current = handleFlipCamera;
   });
 
-  // Siarkan live feed kamera HP ke dasbor komputer secara berkala
+  // Siarkan live feed kamera HP ke dasbor komputer dengan rasio aspek asli (portrait/landscape tidak gepeng)
   useEffect(() => {
     if (!isCameraActive || wsState !== "connected") {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -219,25 +226,36 @@ export default function PhoneCameraClient({ token, onExit }) {
     }
 
     const streamCanvas = document.createElement("canvas");
-    streamCanvas.width = 480;
-    streamCanvas.height = 270;
     const ctx = streamCanvas.getContext("2d");
 
     let busy = false;
     const interval = setInterval(() => {
       if (busy || !videoRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       if (videoRef.current.readyState < 2) return;
-      // Kendalikan penumpukan frame jika bandwidth seluler terbatas
-      if (wsRef.current.bufferedAmount > 65536) return;
+      if (wsRef.current.bufferedAmount > 131072) return;
+
+      const vw = videoRef.current.videoWidth || 1280;
+      const vh = videoRef.current.videoHeight || 720;
+      // Pertahankan rasio aspek asli kamera HP (portrait maupun landscape) pada resolusi 960 px
+      const maxDim = 960;
+      const scale = Math.min(1, maxDim / Math.max(vw, vh));
+      const tw = Math.max(2, Math.round(vw * scale));
+      const th = Math.max(2, Math.round(vh * scale));
+      if (streamCanvas.width !== tw || streamCanvas.height !== th) {
+        streamCanvas.width = tw;
+        streamCanvas.height = th;
+      }
 
       busy = true;
       try {
-        ctx.drawImage(videoRef.current, 0, 0, 480, 270);
-        const dataUrl = streamCanvas.toDataURL("image/jpeg", 0.55);
+        ctx.drawImage(videoRef.current, 0, 0, tw, th);
+        const dataUrl = streamCanvas.toDataURL("image/jpeg", 0.84);
         wsRef.current.send(
           JSON.stringify({
             type: "phone_stream_frame",
             image: dataUrl,
+            width: tw,
+            height: th,
             timestamp: Date.now(),
           }),
         );
@@ -246,7 +264,7 @@ export default function PhoneCameraClient({ token, onExit }) {
       } finally {
         busy = false;
       }
-    }, 280);
+    }, 300);
 
     return () => {
       clearInterval(interval);
@@ -255,6 +273,177 @@ export default function PhoneCameraClient({ token, onExit }) {
       }
     };
   }, [isCameraActive, wsState, videoRef]);
+
+  // Jalankan deteksi Live langsung dari frame kamera asli HP (resolusi penuh 1080p, JPEG 0.92)
+  // agar akurasinya 100% identik dengan membuka Ruang Scan langsung di HP!
+  useEffect(() => {
+    if (!isCameraActive || scanMode !== "live") {
+      if (wsLiveRef.current) {
+        wsLiveRef.current.close();
+        wsLiveRef.current = null;
+      }
+      setLivePolygons([]);
+      return undefined;
+    }
+
+    const wsLive = new WebSocket(`${getWsBaseUrl()}/ws/live`);
+    wsLiveRef.current = wsLive;
+    wsLiveBusyRef.current = false;
+
+    wsLive.onopen = () => {
+      wsLive.send(JSON.stringify({ type: "config", clahe: isClaheOn() }));
+    };
+
+    wsLive.onmessage = (ev) => {
+      wsLiveBusyRef.current = false;
+      try {
+        const data = JSON.parse(ev.data);
+        if (data.type === "cells") {
+          setLiveImageSize({ w: data.image_width || 1280, h: data.image_height || 720 });
+          setSharp(data.quality?.sharpness ?? 0);
+          setLivePolygons(data.cells || []);
+
+          const finalTxt = (data.final_text || "").trim();
+          let votedText = "";
+          let isConfirmed = false;
+          if (finalTxt) {
+            const voted = stabRef.current.push(finalTxt);
+            votedText = voted.text;
+            isConfirmed = voted.confirmed;
+            setLivePreviewText(voted.text);
+            setLiveCellCount((data.cells || []).length);
+            setLiveConfirmed(voted.confirmed);
+          }
+
+          // Teruskan hasil deteksi resolusi penuh ke dasbor laptop secara real-time
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(
+              JSON.stringify({
+                type: "phone_live_detection",
+                payload: {
+                  ...data,
+                  voted_text: votedText,
+                  voted_confirmed: isConfirmed,
+                },
+              }),
+            );
+          }
+        }
+      } catch {
+        // abaikan
+      }
+    };
+
+    wsLive.onerror = () => {
+      wsLiveBusyRef.current = false;
+    };
+
+    const interval = setInterval(async () => {
+      if (!wsLiveRef.current || wsLiveRef.current.readyState !== WebSocket.OPEN) return;
+      if (wsLiveBusyRef.current || !videoRef.current) return;
+      const s = measureSharpness(videoRef.current);
+      setSharp(s.variance);
+      if (s.ready && s.isBlurry) return;
+
+      wsLiveBusyRef.current = true;
+      // Gunakan captureFrame() resolusi asli kamera HP (JPEG 0.92), sama persis dengan web di HP!
+      const blob = await captureFrame();
+      if (!blob) {
+        wsLiveBusyRef.current = false;
+        return;
+      }
+      const buf = await blob.arrayBuffer();
+      if (wsLiveRef.current?.readyState === WebSocket.OPEN) {
+        wsLiveRef.current.send(buf);
+      } else {
+        wsLiveBusyRef.current = false;
+      }
+    }, 900);
+
+    return () => {
+      clearInterval(interval);
+      wsLive.close();
+      wsLiveRef.current = null;
+    };
+  }, [isCameraActive, scanMode, captureFrame, videoRef]);
+
+  // Gambar poligon sel Braille langsung di layar HP juga
+  useEffect(() => {
+    const canvas = overlayCanvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return;
+    const ctx = canvas.getContext("2d");
+    const rect = video.getBoundingClientRect();
+    const cw = Math.max(1, Math.round(rect.width));
+    const ch = Math.max(1, Math.round(rect.height));
+    if (canvas.width !== cw || canvas.height !== ch) {
+      canvas.width = cw;
+      canvas.height = ch;
+    }
+    ctx.clearRect(0, 0, cw, ch);
+    if (!isCameraActive) return;
+
+    if (scanMode === "sentence") {
+      const bandTop = ch * 0.32;
+      const bandH = ch * 0.36;
+      ctx.save();
+      ctx.strokeStyle = "#E6FF2E";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 6]);
+      ctx.strokeRect(16, bandTop, cw - 32, bandH);
+      ctx.restore();
+    }
+
+    if (livePolygons.length === 0) return;
+
+    const iw = liveImageSize.w || video.videoWidth || 1280;
+    const ih = liveImageSize.h || video.videoHeight || 720;
+    const scale = Math.min(cw / iw, ch / ih);
+    const offsetX = (cw - iw * scale) / 2;
+    const offsetY = (ch - ih * scale) / 2;
+
+    livePolygons.forEach((cell) => {
+      const pts = cell.polygon || [
+        [cell.x1, cell.y1],
+        [cell.x2, cell.y1],
+        [cell.x2, cell.y2],
+        [cell.x1, cell.y2],
+      ];
+      if (!pts || pts.length < 4) return;
+      const isReview = cell.flag === "review" || (cell.conf ?? 1) < 0.65;
+      ctx.save();
+      ctx.beginPath();
+      pts.forEach(([px, py], i) => {
+        const sx = offsetX + px * scale;
+        const sy = offsetY + py * scale;
+        if (i === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      });
+      ctx.closePath();
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash(isReview ? [5, 4] : []);
+      ctx.strokeStyle = isReview ? "#E6FF2E" : "#8FC8FF";
+      ctx.fillStyle = isReview ? "rgba(230, 255, 46, 0.20)" : "rgba(44, 146, 221, 0.20)";
+      ctx.fill();
+      ctx.stroke();
+
+      const [x0, y0] = pts[0];
+      const lx = offsetX + x0 * scale;
+      const ly = Math.max(22, offsetY + y0 * scale - 6);
+      const labelTxt = `${cell.symbol}${isReview ? "?" : ""}`;
+      ctx.font = "bold 14px 'Plus Jakarta Sans', sans-serif";
+      const tw = ctx.measureText(labelTxt).width;
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#06152D";
+      ctx.fillRect(lx - 2, ly - 17, tw + 10, 20);
+      ctx.strokeStyle = isReview ? "#E6FF2E" : "#8FC8FF";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(lx - 2, ly - 17, tw + 10, 20);
+      ctx.fillStyle = isReview ? "#E6FF2E" : "#FFFFFF";
+      ctx.fillText(labelTxt, lx + 3, ly - 2);
+      ctx.restore();
+    });
+  }, [livePolygons, liveImageSize, isCameraActive, scanMode, videoRef]);
 
   useEffect(() => {
     let unmounted = false;
@@ -479,6 +668,13 @@ export default function PhoneCameraClient({ token, onExit }) {
                 ? `absolute inset-0 h-full w-full object-cover sm:object-contain pointer-events-none ${isCameraActive ? "block" : "hidden"}`
                 : `h-full w-full object-contain ${isCameraActive ? "block" : "hidden"}`
             }
+          />
+          <canvas
+            ref={overlayCanvasRef}
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-0 h-full w-full ${
+              isCameraActive ? "block" : "hidden"
+            }`}
           />
           {!isCameraActive && (
             <span className="flex items-center justify-center gap-2 px-4 text-center font-semibold text-white z-10">

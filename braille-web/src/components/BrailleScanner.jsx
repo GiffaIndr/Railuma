@@ -690,10 +690,13 @@ export default function BrailleScanner({
   }, [livePolygons, liveImageSize, isCameraActive, phoneStreamUrl, sourceMode, scanMode, videoRef]);
 
   useEffect(() => {
+    // Untuk mode Mirror Kamera HP (sourceMode === "phone"), deteksi /ws/live dijalankan langsung
+    // dari kamera asli 1080p di HP (PhoneCameraClient) agar akurasinya 100% sama dengan buka langsung di HP.
     const canStreamLive =
       liveStreaming &&
       scanMode === "live" &&
-      ((sourceMode === "webcam" && isCameraActive) || (sourceMode === "phone" && phoneCameraActive));
+      sourceMode === "webcam" &&
+      isCameraActive;
 
     if (!canStreamLive) {
       if (wsLiveRef.current) {
@@ -1211,6 +1214,38 @@ export default function BrailleScanner({
             } else if (msg.type === "sync_scan_mode" && msg.scanMode) {
               setScanMode(msg.scanMode);
               setLiveStreaming(msg.scanMode === "live");
+            } else if (msg.type === "phone_live_detection" && msg.payload) {
+              const data = msg.payload;
+              setLiveLatencyMs(data.latency_ms || 0);
+              setLiveImageSize({ w: data.image_width || 1280, h: data.image_height || 720 });
+              setQualityInfo(data.quality || null);
+              setSharp(data.quality?.sharpness ?? 0);
+              setLivePolygons(data.cells || []);
+
+              const finalTxt = (data.voted_text || data.final_text || "").trim();
+              if (finalTxt) {
+                const rawTxt = (data.raw_text || "").trim() || finalTxt;
+                setLivePreviewText(finalTxt);
+                setLiveRawText(rawTxt);
+                setLiveConfirmed(Boolean(data.voted_confirmed));
+                lastValidLiveResultRef.current = {
+                  final_text: finalTxt,
+                  raw_text: rawTxt,
+                  cells: (data.cells || []).map((c) => ({
+                    ...c,
+                    original_symbol: c.original_symbol || c.symbol,
+                    original_pattern: c.original_pattern || c.pattern,
+                  })),
+                  words: data.words || [],
+                  mean_conf: data.mean_conf ?? 0.85,
+                  n_cells: (data.cells || []).length,
+                  skew_deg: data.skew_deg ?? 0,
+                  pitch_px: data.pitch_px ?? 0,
+                  quality: data.quality || null,
+                  sharpness: data.quality?.sharpness ?? 0,
+                  timestamp: Date.now(),
+                };
+              }
             }
           } catch {
             // abaikan pesan transien
