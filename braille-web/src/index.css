@@ -786,8 +786,7 @@ html.dark .mobile-tab-btn[aria-current="page"] {
 
 @media (min-width: 640px) {
   .camera-viewport {
-    min-height: 320px;
-    aspect-ratio: 16 / 9;
+    min-height: 360px;
   }
 }
 

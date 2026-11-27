@@ -54,67 +54,58 @@ function LightingDiagram() {
 
 function VerificationFlowDiagram() {
   return (
-    <svg
-      viewBox="0 0 440 120"
-      className="w-full h-auto rounded-xl border border-[var(--border-subtle)] bg-[#08182E]"
+    <div
       role="img"
-      aria-label="Alur 2 tahap: Tangkap pratinjau, verifikasi sel, lalu simpan ke sesi"
+      aria-label="Alur 3 tahap: Tangkap pratinjau, verifikasi sel, lalu simpan ke sesi"
+      className="rounded-xl border border-[var(--border-subtle)] bg-[#08182E] p-3.5 sm:p-4"
     >
-      {/* Langkah 1 */}
-      <g transform="translate(16, 20)">
-        <rect x="0" y="0" width="120" height="80" rx="10" fill="#0F1F36" stroke="#1E3A5F" />
-        <text x="14" y="24" fill="#E6FF2E" fontSize="11" fontWeight="700">
-          1. Tangkap Citra
-        </text>
-        <text x="14" y="44" fill="#EDF3FB" fontSize="10">
-          Hasil masuk sebagai
-        </text>
-        <text x="14" y="58" fill="#EDF3FB" fontSize="10" fontWeight="700">
-          Pratinjau (Draft)
-        </text>
-        <text x="14" y="72" fill="#9EB3D1" fontSize="9">
-          Database tetap bersih
-        </text>
-      </g>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-stretch">
+        {/* Langkah 1 */}
+        <div className="flex flex-col justify-between rounded-xl bg-[#0F1F36] border border-[#1E3A5F] p-3 text-left">
+          <div>
+            <span className="block text-[0.8rem] font-bold text-[#E6FF2E]">
+              1. Tangkap Citra
+            </span>
+            <p className="m-0 mt-1 text-[0.76rem] leading-snug text-[#EDF3FB]">
+              Hasil masuk sebagai <strong>Pratinjau (Draft)</strong>
+            </p>
+          </div>
+          <span className="mt-2 block text-[0.7rem] font-medium text-[#9EB3D1]">
+            Database tetap bersih
+          </span>
+        </div>
 
-      <path d="M 142 60 L 156 60" stroke="#E6FF2E" strokeWidth="2" />
+        {/* Langkah 2 */}
+        <div className="flex flex-col justify-between rounded-xl bg-[#0F1F36] border-2 border-[#E6FF2E] p-3 text-left">
+          <div>
+            <span className="block text-[0.8rem] font-bold text-[#E6FF2E]">
+              2. Verifikasi Sel
+            </span>
+            <p className="m-0 mt-1 text-[0.76rem] leading-snug text-[#EDF3FB]">
+              Setujui &amp; kunci huruf atau pilih alternatif
+            </p>
+          </div>
+          <span className="mt-2 block text-[0.7rem] font-medium text-[#9EB3D1]">
+            Bisa kembali ke huruf awal
+          </span>
+        </div>
 
-      {/* Langkah 2 */}
-      <g transform="translate(162, 20)">
-        <rect x="0" y="0" width="120" height="80" rx="10" fill="#0F1F36" stroke="#E6FF2E" strokeWidth="1.5" />
-        <text x="14" y="24" fill="#E6FF2E" fontSize="11" fontWeight="700">
-          2. Verifikasi Sel
-        </text>
-        <text x="14" y="44" fill="#EDF3FB" fontSize="10">
-          Setujui &amp; kunci huruf
-        </text>
-        <text x="14" y="58" fill="#EDF3FB" fontSize="10">
-          atau pilih alternatif
-        </text>
-        <text x="14" y="72" fill="#9EB3D1" fontSize="9">
-          Bisa kembali ke huruf awal
-        </text>
-      </g>
-
-      <path d="M 288 60 L 302 60" stroke="#E6FF2E" strokeWidth="2" />
-
-      {/* Langkah 3 */}
-      <g transform="translate(308, 20)">
-        <rect x="0" y="0" width="116" height="80" rx="10" fill="#064E3B" stroke="#34D399" />
-        <text x="14" y="24" fill="#FFFFFF" fontSize="11" fontWeight="700">
-          3. Simpan Sesi
-        </text>
-        <text x="14" y="44" fill="#D1FAE5" fontSize="10">
-          Klik tombol hijau
-        </text>
-        <text x="14" y="58" fill="#FFFFFF" fontSize="10" fontWeight="700">
-          Simpan ke Sesi Ini
-        </text>
-        <text x="14" y="72" fill="#A7F3D0" fontSize="9">
-          Tercatat permanen
-        </text>
-      </g>
-    </svg>
+        {/* Langkah 3 */}
+        <div className="flex flex-col justify-between rounded-xl bg-[#064E3B] border border-[#34D399] p-3 text-left">
+          <div>
+            <span className="block text-[0.8rem] font-bold text-white">
+              3. Simpan Sesi
+            </span>
+            <p className="m-0 mt-1 text-[0.76rem] leading-snug text-[#D1FAE5]">
+              Klik tombol hijau <strong className="text-white">Simpan ke Sesi Ini</strong>
+            </p>
+          </div>
+          <span className="mt-2 block text-[0.7rem] font-medium text-[#A7F3D0]">
+            Tercatat permanen
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
 

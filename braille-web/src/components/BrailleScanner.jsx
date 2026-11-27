@@ -3209,14 +3209,14 @@ export default function BrailleScanner({
                     )}
                   </>
                 ) : (
-                  <div className="mx-auto my-auto w-full flex flex-col items-center justify-center gap-3 px-5 py-4 text-center z-10 max-w-[460px]">
+                  <div className="mx-auto my-auto w-full flex flex-col items-center justify-center gap-2.5 px-5 py-5 text-center z-10 max-w-[440px]">
                     <div className="flex flex-col gap-1">
-                      <span className="text-[1.04rem] font-bold text-white">
+                      <span className="text-[1.02rem] font-bold text-white">
                         {pairPeers > 0
                           ? "HP Terhubung · Siap Mirror Kamera"
                           : "Scan QR dengan Kamera HP untuk Mirror Langsung"}
                       </span>
-                      <span className="text-[0.8rem] leading-relaxed text-white/75">
+                      <span className="text-[0.78rem] leading-relaxed text-white/75">
                         {pairPeers > 0
                           ? "Nyalakan kamera pada halaman di HP Anda untuk menampilkan pratinjau langsung di layar ini."
                           : "Arahkan kamera HP Anda ke kode QR di bawah ini untuk langsung membuka kamera belakang HP tanpa perlu menyalin tautan."}
@@ -3224,25 +3224,25 @@ export default function BrailleScanner({
                     </div>
 
                     {pairQrDataUrl ? (
-                      <div className="flex flex-col items-center gap-1.5 rounded-2xl bg-white p-3 shadow-xl border-2 border-[#E6FF2E]">
+                      <div className="flex flex-col items-center gap-1 rounded-2xl bg-white p-2.5 shadow-xl border-2 border-[#E6FF2E]">
                         <img
                           src={pairQrDataUrl}
                           alt="Kode QR untuk menghubungkan Mirror Kamera HP"
-                          width={168}
-                          height={168}
-                          className="h-[168px] w-[168px] rounded-lg object-contain"
+                          width={142}
+                          height={142}
+                          className="h-[142px] w-[142px] rounded-lg object-contain"
                         />
-                        <span className="text-[0.73rem] font-bold text-[#0B1C33]">
+                        <span className="text-[0.71rem] font-bold text-[#0B1C33]">
                           Pindai QR ini dari HP Anda
                         </span>
                       </div>
                     ) : (
-                      <div className="flex h-[168px] w-[168px] items-center justify-center rounded-2xl bg-white/10 text-white/80 text-[0.8rem] font-semibold border border-white/15">
+                      <div className="flex h-[142px] w-[142px] items-center justify-center rounded-2xl bg-white/10 text-white/80 text-[0.78rem] font-semibold border border-white/15">
                         Membuat Kode QR...
                       </div>
                     )}
 
-                    <div className="w-full flex flex-col gap-2 rounded-xl bg-black/55 p-2.5 border border-white/15">
+                    <div className="w-full flex flex-col gap-1.5 rounded-xl bg-black/55 p-2.5 border border-white/15">
                       <div className="flex items-center gap-2">
                         <input
                           type="text"
@@ -3264,7 +3264,7 @@ export default function BrailleScanner({
                       <button
                         type="button"
                         onClick={() => setSourceMode("webcam")}
-                        className="border-0 bg-transparent p-0 text-[0.74rem] font-semibold text-[#E6FF2E] hover:underline cursor-pointer"
+                        className="border-0 bg-transparent p-0 text-[0.73rem] font-semibold text-[#E6FF2E] hover:underline cursor-pointer"
                       >
                         Sedang membuka langsung di HP? Klik di sini untuk memakai Kamera Perangkat langsung.
                       </button>
