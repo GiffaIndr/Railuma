@@ -339,45 +339,64 @@ class RailumaStore:
             _simpan_lokal(db)
 
     def list_sessions(self, user_id: str, access_token: str | None = None) -> list[dict]:
+        db_local = _baca_lokal()
+        local_sessions = [s for s in db_local["sessions"] if s.get("user_id") == user_id]
+        local_items_by_ses: dict[str, list] = {}
+        for it in db_local["items"]:
+            local_items_by_ses.setdefault(it["session_id"], []).append(it)
+
         if not SUPABASE_OFFLINE and access_token and not access_token.startswith("local_"):
             try:
                 r = HTTP.get(
                     f"{SUPABASE_URL}/rest/v1/railuma_sessions?user_id=eq.{user_id}&select=*&order=pinned.desc,updated_at.desc",
                     headers=_headers(access_token),
-                    timeout=4.0,
+                    timeout=8.0,
                 )
                 if r.ok:
                     sessions = r.json()
+                    supa_ids = {s["id"] for s in sessions if "id" in s}
+                    for ls in local_sessions:
+                        if ls["id"] not in supa_ids:
+                            sessions.append(ls)
                     session_ids = [s["id"] for s in sessions if "id" in s]
                     items = []
                     if session_ids:
                         ids_str = ",".join(session_ids)
                         r_items = HTTP.get(
-                            f"{SUPABASE_URL}/rest/v1/railuma_scan_items?session_id=in.({ids_str})&select=id,session_id,final_text,status,confidence,created_at&order=created_at.desc&limit=200",
+                            f"{SUPABASE_URL}/rest/v1/railuma_scan_items?session_id=in.({ids_str})&select=id,session_id,final_text,status,confidence,created_at&order=created_at.desc&limit=300",
                             headers=_headers(access_token),
-                            timeout=4.0,
+                            timeout=8.0,
                         )
                         items = r_items.json() if (r_items.ok and isinstance(r_items.json(), list)) else []
                     by_ses: dict[str, list] = {}
+                    seen_item_ids: set[str] = set()
                     for it in items:
+                        seen_item_ids.add(it["id"])
                         by_ses.setdefault(it["session_id"], []).append(it)
+                    for sid, l_items in local_items_by_ses.items():
+                        for lit in reversed(l_items):
+                            if lit["id"] not in seen_item_ids:
+                                by_ses.setdefault(sid, []).insert(0, lit)
                     for s in sessions:
                         daftar = by_ses.get(s["id"], [])
                         s["scan_count"] = len(daftar)
                         s["last_preview"] = daftar[0]["final_text"] if daftar else ""
                         s["needs_review_count"] = sum(1 for x in daftar if x.get("status") == "needs_review")
+                    sessions.sort(
+                        key=lambda x: (bool(x.get("pinned")), x.get("updated_at", "")),
+                        reverse=True,
+                    )
                     return sessions
             except Exception:  # noqa: BLE001
                 pass
 
-        db = _baca_lokal()
-        sessions = [s for s in db["sessions"] if s.get("user_id") == user_id]
+        sessions = local_sessions
         sessions.sort(
             key=lambda x: (bool(x.get("pinned")), x.get("updated_at", "")),
             reverse=True,
         )
         for s in sessions:
-            daftar = [i for i in db["items"] if i["session_id"] == s["id"]]
+            daftar = local_items_by_ses.get(s["id"], [])
             s["scan_count"] = len(daftar)
             s["last_preview"] = daftar[-1]["final_text"] if daftar else ""
             s["needs_review_count"] = sum(1 for x in daftar if x.get("status") == "needs_review")
@@ -392,7 +411,7 @@ class RailumaStore:
                     f"{SUPABASE_URL}/rest/v1/railuma_sessions",
                     headers=_headers(access_token),
                     json=payload,
-                    timeout=3.0,
+                    timeout=8.0,
                 )
                 if r.ok and r.json():
                     ses = r.json()[0]
@@ -421,6 +440,11 @@ class RailumaStore:
         return ses
 
     def get_session_detail(self, user_id: str, session_id: str, access_token: str | None = None) -> dict | None:
+        db_local = _baca_lokal()
+        local_items = [i for i in db_local["items"] if i["session_id"] == session_id]
+        for lit in local_items:
+            lit["revisions"] = [rv for rv in db_local["revisions"] if rv["item_id"] == lit["id"]]
+
         if not SUPABASE_OFFLINE and access_token and not access_token.startswith("local_"):
             try:
                 hdrs = _headers(access_token)
@@ -428,13 +452,13 @@ class RailumaStore:
                     HTTP.get,
                     f"{SUPABASE_URL}/rest/v1/railuma_sessions?id=eq.{session_id}&user_id=eq.{user_id}&select=*",
                     headers=hdrs,
-                    timeout=4.0,
+                    timeout=8.0,
                 )
                 f_it = _POOL.submit(
                     HTTP.get,
                     f"{SUPABASE_URL}/rest/v1/railuma_scan_items?session_id=eq.{session_id}&select=*&order=created_at.asc",
                     headers=hdrs,
-                    timeout=4.0,
+                    timeout=8.0,
                 )
                 r = f_ses.result()
                 r_it = f_it.result()
@@ -446,7 +470,7 @@ class RailumaStore:
                         r_rev = HTTP.get(
                             f"{SUPABASE_URL}/rest/v1/railuma_revisions?item_id=in.({ids_str})&select=*&order=revision_number.asc",
                             headers=hdrs,
-                            timeout=3.5,
+                            timeout=6.0,
                         )
                         revs = r_rev.json() if r_rev.ok else []
                         by_item: dict[str, list] = {}
@@ -454,18 +478,18 @@ class RailumaStore:
                             by_item.setdefault(rv["item_id"], []).append(rv)
                         for it in items:
                             it["revisions"] = by_item.get(it["id"], [])
+                    seen_ids = {i["id"] for i in items}
+                    for lit in local_items:
+                        if lit["id"] not in seen_ids:
+                            items.append(lit)
                     ses["items"] = items
                     return ses
             except Exception:  # noqa: BLE001
                 pass
 
-        db = _baca_lokal()
-        for ses in db["sessions"]:
+        for ses in db_local["sessions"]:
             if ses["id"] == session_id and ses.get("user_id") == user_id:
-                items = [i for i in db["items"] if i["session_id"] == session_id]
-                for it in items:
-                    it["revisions"] = [rv for rv in db["revisions"] if rv["item_id"] == it["id"]]
-                return {**ses, "items": items}
+                return {**ses, "items": local_items}
         return None
 
     def update_session(
@@ -569,7 +593,7 @@ class RailumaStore:
                     f"{SUPABASE_URL}/rest/v1/railuma_scan_items",
                     headers=hdrs,
                     json=row,
-                    timeout=3.5,
+                    timeout=8.0,
                 )
                 if r.ok and r.json():
                     item = r.json()[0]
@@ -585,14 +609,14 @@ class RailumaStore:
                         f"{SUPABASE_URL}/rest/v1/railuma_revisions",
                         headers=hdrs,
                         json=rev_payload,
-                        timeout=2.5,
+                        timeout=4.0,
                     )
                     _POOL.submit(
                         HTTP.patch,
                         f"{SUPABASE_URL}/rest/v1/railuma_sessions?id=eq.{session_id}&user_id=eq.{user_id}",
                         headers=hdrs,
                         json={"updated_at": now},
-                        timeout=2.5,
+                        timeout=4.0,
                     )
                     r_rev = f_rev.result()
                     item["revisions"] = r_rev.json() if (r_rev.ok and r_rev.json()) else [rev_payload]

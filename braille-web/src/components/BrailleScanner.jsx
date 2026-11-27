@@ -299,12 +299,47 @@ export default function BrailleScanner({
   }, [isCameraFullscreen, onFullscreenChange]);
 
   // Panel Inspektor Sel & Revisi
-  const [selectedItem, setSelectedItem] = useState(null);
+  const [selectedItem, setSelectedItem] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem("railuma_unsaved_draft");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.isDraft) return parsed;
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  });
   const [selectedCellIdx, setSelectedCellIdx] = useState(null);
-  const [editingText, setEditingText] = useState("");
+  const [editingText, setEditingText] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem("railuma_unsaved_draft");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.isDraft) return parsed.final_text || "";
+      }
+    } catch {
+      /* ignore */
+    }
+    return "";
+  });
   const [editingNote, setEditingNote] = useState("");
   const [savingRevision, setSavingRevision] = useState(false);
   const [copiedKey, setCopiedKey] = useState(null);
+
+  useEffect(() => {
+    try {
+      if (selectedItem?.isDraft) {
+        const { blob: _blob, ...serializableDraft } = selectedItem;
+        sessionStorage.setItem("railuma_unsaved_draft", JSON.stringify(serializableDraft));
+      } else {
+        sessionStorage.removeItem("railuma_unsaved_draft");
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [selectedItem]);
 
   const sessionCacheRef = useRef((() => {
     const map = new Map();
@@ -341,6 +376,8 @@ export default function BrailleScanner({
   const deletedSessionIdsRef = useRef(new Set());
   const localOverridesRef = useRef(new Map());
   const pendingCreatesRef = useRef(new Map());
+  const pendingCreatePromisesRef = useRef(new Map());
+  const pendingSavedItemsRef = useRef(new Map());
   const tempToRealIdRef = useRef(new Map());
   const detailReqSeqRef = useRef(0);
   const onAuthExpiredRef = useRef(onAuthExpired);
@@ -524,7 +561,22 @@ export default function BrailleScanner({
         const detail = await getSessionDetail(resolvedId);
         if (!detail || deletedSessionIdsRef.current.has(resolvedId)) return;
         const override = localOverridesRef.current.get(resolvedId);
-        const mergedDetail = { ...detail, ...(override || {}) };
+        const serverItems = Array.isArray(detail.items) ? detail.items : [];
+        const localSaved = pendingSavedItemsRef.current.get(resolvedId) || [];
+        const seenItemIds = new Set(serverItems.map((it) => it.id));
+        const combinedItems = [...serverItems];
+        localSaved.forEach((locIt) => {
+          if (locIt && locIt.id && !seenItemIds.has(locIt.id)) {
+            combinedItems.push(locIt);
+            seenItemIds.add(locIt.id);
+          }
+        });
+        const mergedDetail = {
+          ...detail,
+          ...(override || {}),
+          items: combinedItems,
+          scan_count: combinedItems.length,
+        };
         persistSessionDetailCache(resolvedId, mergedDetail);
 
         // Sinkronkan jumlah tangkapan & pratinjau ke kartu daftar sesi
@@ -926,12 +978,12 @@ export default function BrailleScanner({
       setFullscreenFeedback({
         type: "done",
         message: `Tangkapan Siap: "${draftItem.final_text}"`,
-        detail: "Hasil masuk ke panel kanan. Verifikasi lalu klik Simpan ke Sesi.",
+        detail: "Klik tombol Simpan ke Sesi Ini agar data hasil pindai tersimpan.",
       });
       clearTimeout(feedbackTimerRef.current);
       feedbackTimerRef.current = setTimeout(() => {
         setFullscreenFeedback(null);
-      }, 4500);
+      }, 15000);
       return;
     }
 
@@ -1037,7 +1089,7 @@ export default function BrailleScanner({
       setFullscreenFeedback({
         type: "done",
         message: `Tangkapan Siap: "${draftItem.final_text}"`,
-        detail: "Hasil belum disimpan. Periksa di panel kanan lalu klik Simpan ke Sesi.",
+        detail: "Klik tombol Simpan ke Sesi Ini agar data hasil pindai tersimpan.",
       });
       if (typeof navigator !== "undefined" && navigator.vibrate) {
         navigator.vibrate([40, 60, 40]);
@@ -1045,7 +1097,7 @@ export default function BrailleScanner({
       clearTimeout(feedbackTimerRef.current);
       feedbackTimerRef.current = setTimeout(() => {
         setFullscreenFeedback(null);
-      }, 5000);
+      }, 15000);
     } catch (err) {
       console.error(err);
       setStatus("error");
@@ -1266,14 +1318,12 @@ export default function BrailleScanner({
     // Jika mode Live di Mirror HP sudah memiliki bacaan stabil di layar, langsung tangkap ke panel kanan dalam 0ms!
     if (
       scanMode === "live" &&
-      phoneStreamUrl &&
+      (phoneStreamUrl || phoneCameraActive) &&
       (livePreviewText?.trim() || lastValidLiveResultRef.current?.final_text)
     ) {
       const liveBlob = await capturePhoneStreamBlob();
-      if (liveBlob) {
-        await executeSingleOrFreezeScan(liveBlob, "phone");
-        return;
-      }
+      await executeSingleOrFreezeScan(liveBlob || new Blob(["live"], { type: "image/jpeg" }), "phone");
+      return;
     }
     if (pairWsRef.current && pairWsRef.current.readyState === WebSocket.OPEN) {
       pairWsRef.current.send(JSON.stringify({ type: "request_capture", scanMode }));
@@ -1332,9 +1382,13 @@ export default function BrailleScanner({
     announce(`${title} dibuat.`);
     toast.success(`${title} berhasil dibuat.`);
 
+    const createPromise = createSession(title);
+    pendingCreatePromisesRef.current.set(tempId, createPromise);
+
     try {
-      const baru = await createSession(title);
+      const baru = await createPromise;
       pendingCreatesRef.current.delete(tempId);
+      pendingCreatePromisesRef.current.delete(tempId);
       tempToRealIdRef.current.set(tempId, baru.id);
 
       // Jika pengguna menghapus sesi ini saat request create masih di jalan, langsung hapus di server
@@ -1351,16 +1405,27 @@ export default function BrailleScanner({
         updateSession(baru.id, override).catch(() => {});
       }
 
+      const tempPendingItems = pendingSavedItemsRef.current.get(tempId) || [];
+      if (tempPendingItems.length > 0) {
+        const existingReal = pendingSavedItemsRef.current.get(baru.id) || [];
+        pendingSavedItemsRef.current.set(baru.id, [...existingReal, ...tempPendingItems]);
+        pendingSavedItemsRef.current.delete(tempId);
+      }
+
       const cachedTemp = sessionCacheRef.current.get(tempId);
+      const mergedTempItems = cachedTemp?.items || tempPendingItems;
       const finalSes = {
         ...baru,
-        scan_count: cachedTemp?.items?.length || 0,
-        last_preview: baru.last_preview || "",
+        scan_count: mergedTempItems.length,
+        last_preview:
+          mergedTempItems.length > 0
+            ? mergedTempItems[mergedTempItems.length - 1].final_text || baru.last_preview || ""
+            : baru.last_preview || "",
         ...(override || {}),
       };
       const finalDetail = {
         ...finalSes,
-        items: cachedTemp?.items || [],
+        items: mergedTempItems,
       };
       sessionCacheRef.current.delete(tempId);
       persistSessionDetailCache(baru.id, finalDetail);
@@ -1374,6 +1439,7 @@ export default function BrailleScanner({
     } catch (err) {
       console.error(err);
       pendingCreatesRef.current.delete(tempId);
+      pendingCreatePromisesRef.current.delete(tempId);
       toast.error("Gagal menyinkronkan sesi baru ke server.");
     }
   };
@@ -1480,22 +1546,46 @@ export default function BrailleScanner({
 
   const handleCommitDraftToSession = async () => {
     if (!selectedItem || !selectedItem.isDraft) return;
-    let targetSessionId = tempToRealIdRef.current.get(activeSessionId) || activeSessionId;
+    let origId = activeSessionId;
+    let targetSessionId = tempToRealIdRef.current.get(origId) || origId;
 
     setSavingRevision(true);
     announce("Menyimpan hasil tangkapan ke sesi aktif...");
 
     try {
-      // Jika belum ada sesi sama sekali atau masih tempId, pastikan sesi dibuat di server dulu
+      // Jika sesi sedang dibuat (tempId in-flight), tunggu promise pembuatan sesi tersebut agar tidak membuat sesi ganda
+      if (targetSessionId && String(targetSessionId).startsWith("temp-")) {
+        const inFlight = pendingCreatePromisesRef.current.get(targetSessionId);
+        if (inFlight) {
+          const resolvedSes = await inFlight;
+          if (resolvedSes?.id) {
+            tempToRealIdRef.current.set(targetSessionId, resolvedSes.id);
+            targetSessionId = resolvedSes.id;
+          }
+        }
+      }
+
+      // Jika belum ada sesi sama sekali atau masih tempId tanpa promise aktif, buat sesi di server dulu
       if (!targetSessionId || String(targetSessionId).startsWith("temp-")) {
         const tempTitle = activeSession?.title || "Sesi 001";
         const created = await createSession(tempTitle);
+        if (origId && String(origId).startsWith("temp-")) {
+          tempToRealIdRef.current.set(origId, created.id);
+        }
         targetSessionId = created.id;
+        setSessions((prev) => {
+          const hasOrig = origId && prev.some((s) => s.id === origId);
+          if (hasOrig) {
+            return prev.map((s) => (s.id === origId ? { ...s, ...created, id: created.id } : s));
+          }
+          if (prev.some((s) => s.id === created.id)) return prev;
+          return [created, ...prev];
+        });
         setActiveSessionId(targetSessionId);
       }
 
       const finalTxt = (editingText || selectedItem.final_text || "").trim();
-      const res = await createSessionScan(targetSessionId, selectedItem.blob, {
+      const res = await createSessionScan(targetSessionId, selectedItem.blob || null, {
         mode: selectedItem.mode,
         source: selectedItem.source,
         checkBlur: false,
@@ -1504,14 +1594,22 @@ export default function BrailleScanner({
         cellsJson: selectedItem.cells_json,
       });
 
-      const savedItem = res?.item || {
-        ...selectedItem,
-        id: res?.id || `item-${Date.now()}`,
-        final_text: finalTxt,
-        notes: editingNote || "",
+      const savedItem = {
+        ...(res?.item || {
+          ...selectedItem,
+          id: res?.id || `item-${Date.now()}`,
+          final_text: finalTxt,
+          notes: editingNote || "",
+        }),
       };
       delete savedItem.isDraft;
       delete savedItem.blob;
+
+      // Simpan ke daftar pendingSavedItemsRef agar jika loadActiveSessionDetail sedang in-flight tidak menimpa item baru ini
+      const prevSavedList = pendingSavedItemsRef.current.get(targetSessionId) || [];
+      if (!prevSavedList.some((x) => x.id === savedItem.id)) {
+        pendingSavedItemsRef.current.set(targetSessionId, [...prevSavedList, savedItem]);
+      }
 
       // Update state lokal secara instan tanpa menunggu reload penuh
       setSelectedItem(savedItem);
@@ -1520,9 +1618,13 @@ export default function BrailleScanner({
 
       setActiveSession((prev) => {
         const prevItems = prev?.items || [];
-        const nextItems = [...prevItems, savedItem];
+        const exists = prevItems.some((it) => it.id === savedItem.id);
+        const nextItems = exists
+          ? prevItems.map((it) => (it.id === savedItem.id ? savedItem : it))
+          : [...prevItems, savedItem];
         const nextDetail = {
           ...(prev || { id: targetSessionId, title: "Sesi Aktif" }),
+          id: targetSessionId,
           items: nextItems,
           scan_count: nextItems.length,
           last_preview: savedItem.final_text,
@@ -1533,15 +1635,31 @@ export default function BrailleScanner({
 
       setSessions((prev) =>
         prev.map((s) =>
-          s.id === targetSessionId
+          s.id === targetSessionId || s.id === origId
             ? {
                 ...s,
-                scan_count: (s.scan_count || 0) + 1,
+                id: targetSessionId,
+                scan_count: Math.max(
+                  (s.scan_count || 0) + 1,
+                  (pendingSavedItemsRef.current.get(targetSessionId) || []).length,
+                ),
                 last_preview: savedItem.final_text,
               }
             : s,
         ),
       );
+
+      if (isCameraFullscreen) {
+        setFullscreenFeedback({
+          type: "done",
+          message: `Tersimpan ke Sesi: "${savedItem.final_text}"`,
+          detail: "Data hasil pindai telah berhasil masuk ke daftar sesi aktif.",
+        });
+        clearTimeout(feedbackTimerRef.current);
+        feedbackTimerRef.current = setTimeout(() => {
+          setFullscreenFeedback(null);
+        }, 3500);
+      }
 
       announce(`Berhasil disimpan ke sesi: ${savedItem.final_text}`);
       toast.success("Berhasil disimpan ke sesi aktif!");
@@ -1645,6 +1763,13 @@ export default function BrailleScanner({
       setActiveSession((prev) => {
         if (!prev) return prev;
         const nextItems = (prev.items || []).filter((x) => x.id !== itemId);
+        const prevPending = pendingSavedItemsRef.current.get(targetSessionId) || [];
+        if (prevPending.length > 0) {
+          pendingSavedItemsRef.current.set(
+            targetSessionId,
+            prevPending.filter((x) => x.id !== itemId),
+          );
+        }
         const nextDetail = {
           ...prev,
           items: nextItems,
@@ -3252,6 +3377,31 @@ export default function BrailleScanner({
                           <p className="m-0 mt-0.5 text-[0.8rem] text-white/80 leading-normal line-clamp-2">
                             {fullscreenFeedback.detail}
                           </p>
+                        )}
+                        {fullscreenFeedback.type === "done" && selectedItem?.isDraft && (
+                          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={savingRevision}
+                              onClick={handleCommitDraftToSession}
+                              className="inline-flex items-center gap-1.5 rounded-xl bg-[#E6FF2E] px-3.5 py-1.5 text-[0.8rem] font-extrabold text-[#0A1628] shadow-md hover:bg-[#d8f31d] disabled:opacity-60 cursor-pointer border-0"
+                            >
+                              <Check size={15} aria-hidden="true" />
+                              <span>{savingRevision ? "Menyimpan..." : "Simpan ke Sesi Ini"}</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={savingRevision}
+                              onClick={() => {
+                                handleDiscardDraft();
+                                setFullscreenFeedback(null);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-xl bg-white/15 px-3 py-1.5 text-[0.78rem] font-bold text-white hover:bg-white/25 disabled:opacity-60 cursor-pointer border border-white/20"
+                            >
+                              <X size={14} aria-hidden="true" />
+                              <span>Buang</span>
+                            </button>
+                          </div>
                         )}
                       </div>
                       {fullscreenFeedback.type !== "loading" && (

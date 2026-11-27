@@ -345,7 +345,7 @@ def api_delete_session(session_id: str, auth: dict = Depends(require_auth)):
 @app.post("/api/v1/sessions/{session_id}/scans")
 def api_create_scan(
     session_id: str,
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(None),
     mode: str = Form("photo"),
     source: str = Form("webcam"),
     clahe: bool = Form(False),
@@ -356,13 +356,29 @@ def api_create_scan(
     cells_json: str | None = Form(None),
     auth: dict = Depends(require_auth),
 ):
-    data = np.frombuffer(file.file.read(), np.uint8)
-    img = cv2.imdecode(data, cv2.IMREAD_COLOR)
-    if img is None:
+    img = None
+    if file is not None:
+        raw_bytes = file.file.read()
+        if raw_bytes:
+            data = np.frombuffer(raw_bytes, np.uint8)
+            img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+
+    has_precomputed = isinstance(override_final_text, str) and bool(override_final_text.strip())
+    if img is None and not has_precomputed:
         raise HTTPException(status_code=400, detail="Berkas bukan gambar yang valid.")
 
-    kualitas = assess_quality(img)
-    if check_blur and kualitas["is_blurry"]:
+    if img is not None:
+        kualitas = assess_quality(img)
+    else:
+        kualitas = {
+            "score": 85.0,
+            "sharpness": 90,
+            "glare": 0.0,
+            "is_blurry": False,
+            "hints": [],
+        }
+
+    if check_blur and kualitas["is_blurry"] and not has_precomputed:
         return {
             "status": "blurry",
             "sharpness": kualitas["sharpness"],
@@ -370,27 +386,49 @@ def api_create_scan(
             "message": "Gambar kurang tajam atau kamera terlalu dekat. Tahan stabil lalu pindai ulang.",
         }
 
-    hasil = jalankan(img, clahe=clahe, adaptive=True)
-    final_txt = override_final_text if isinstance(override_final_text, str) else hasil["final_text"]
-    raw_txt = override_raw_text if isinstance(override_raw_text, str) else hasil["raw_text"]
-
-    cells_data = hasil["cells"]
+    parsed_cells: list | None = None
     if cells_json:
         try:
             parsed = json.loads(cells_json)
             if isinstance(parsed, list):
-                cells_data = parsed
+                parsed_cells = parsed
         except Exception:
-            pass
+            parsed_cells = None
+
+    # Jalur cepat (<100ms): jika frontend sudah memiliki hasil bacaan dari /translate atau /ws/live,
+    # jangan jalankan ulang inferensi YOLO multi-pass agar penyimpanan instan dan bebas timeout.
+    if has_precomputed and parsed_cells is not None:
+        final_txt = override_final_text.strip()
+        raw_txt = (override_raw_text.strip() if isinstance(override_raw_text, str) and override_raw_text.strip() else final_txt)
+        cells_data = parsed_cells
+        confs = [float(c.get("conf", 0.85)) for c in cells_data if isinstance(c, dict)]
+        mean_conf = round(sum(confs) / len(confs), 3) if confs else 0.88
+        hasil = {
+            "final_text": final_txt,
+            "raw_text": raw_txt,
+            "cells": cells_data,
+            "n_cells": len(cells_data) or len(final_txt.replace(" ", "")),
+            "mean_conf": mean_conf,
+            "pitch_px": 0.0,
+            "skew_deg": 0.0,
+            "words": [],
+        }
+    else:
+        hasil = jalankan(img, clahe=clahe, adaptive=True)
+        final_txt = override_final_text if isinstance(override_final_text, str) else hasil["final_text"]
+        raw_txt = override_raw_text if isinstance(override_raw_text, str) else hasil["raw_text"]
+        cells_data = parsed_cells if parsed_cells is not None else hasil["cells"]
 
     perlu_tinjau = (
         hasil["mean_conf"] < 0.72
-        or any(c.get("flag") == "review" for c in cells_data)
+        or any(isinstance(c, dict) and c.get("flag") == "review" for c in cells_data)
         or any(w.get("ragu") for row in hasil["words"] for w in row)
     )
     status_item = "needs_review" if (perlu_tinjau and final_txt.strip()) else "done"
 
-    thumb_url = _buat_thumbnail_data_url(img) if save_image else None
+    thumb_url = _buat_thumbnail_data_url(img) if (save_image and img is not None) else None
+    img_w = int(img.shape[1]) if img is not None else 1280
+    img_h = int(img.shape[0]) if img is not None else 720
 
     saved = STORE.add_scan_item(
         user_id=auth["id"],
@@ -410,10 +448,10 @@ def api_create_scan(
             "confidence": hasil["mean_conf"],
             "raw_text": raw_txt,
             "final_text": final_txt,
-            "cell_count": len(cells_data) if cells_json else hasil["n_cells"],
+            "cell_count": len(cells_data) if cells_data else hasil["n_cells"],
             "image_url": thumb_url,
-            "image_width": img.shape[1],
-            "image_height": img.shape[0],
+            "image_width": img_w,
+            "image_height": img_h,
             "words_json": hasil["words"],
             "cells_json": cells_data,
         },

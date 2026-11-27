@@ -208,7 +208,10 @@ async function fetchJson(url, options = {}, timeoutMs = 35000, isRetry = false, 
     headers.Authorization = `Bearer ${token}`;
   }
   const method = (options.method || "GET").toUpperCase();
-  const canAutoRetry = method === "GET" || url.includes("/translate");
+  const canAutoRetry =
+    method === "GET" ||
+    url.includes("/translate") ||
+    url.includes("/sessions");
 
   try {
     const response = await fetch(url, {
@@ -385,7 +388,9 @@ export const createSessionScan = async (
   } = {},
 ) => {
   const formData = new FormData();
-  formData.append("file", imageBlob, "braille-scan.jpg");
+  if (imageBlob instanceof Blob) {
+    formData.append("file", imageBlob, "braille-scan.jpg");
+  }
   formData.append("mode", mode);
   formData.append("source", source);
   formData.append("clahe", isClaheOn() ? "true" : "false");
