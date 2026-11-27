@@ -41,8 +41,7 @@ export default function PhoneCameraClient({ token, onExit }) {
 
   const handleSelectScanMode = (nextMode) => {
     setScanMode(nextMode);
-    const label =
-      nextMode === "sentence" ? "Kalimat (Burst 3 Frame)" : nextMode === "photo" ? "Foto Presisi" : "Live";
+    const label = nextMode === "photo" ? "Foto Presisi" : "Live";
     setStatusMsg(`Mode ${label} aktif.`);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "sync_scan_mode", scanMode: nextMode }));
@@ -559,7 +558,7 @@ export default function PhoneCameraClient({ token, onExit }) {
       </div>
 
       <div className="card flex flex-col gap-4">
-        {/* Pilihan Mode Pemindaian Kamera HP: Live, Kalimat, Foto Presisi */}
+        {/* Pilihan Mode Pemindaian Kamera HP: Live, Foto Presisi */}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[0.82rem] font-bold text-muted-theme">Mode Kamera:</span>
           <div
@@ -569,7 +568,6 @@ export default function PhoneCameraClient({ token, onExit }) {
           >
             {[
               { id: "live", label: "Live" },
-              { id: "sentence", label: "Kalimat" },
               { id: "photo", label: "Foto Presisi" },
             ].map((m) => (
               <button
@@ -712,7 +710,6 @@ export default function PhoneCameraClient({ token, onExit }) {
                 <div className="flex items-center gap-1 bg-black/70 p-1.5 rounded-full backdrop-blur-md border border-white/20">
                   {[
                     { id: "live", label: "Live" },
-                    { id: "sentence", label: "Kalimat" },
                     { id: "photo", label: "Foto Presisi" },
                   ].map((m) => (
                     <button
@@ -767,13 +764,7 @@ export default function PhoneCameraClient({ token, onExit }) {
               >
                 <Send size={20} aria-hidden="true" />
                 <span>
-                  {burstProgress > 0
-                    ? `Menangkap Frame ${burstProgress}/3...`
-                    : scanMode === "sentence"
-                      ? "Tangkap Kalimat (Burst 3 Frame)"
-                      : scanMode === "photo"
-                        ? "Tangkap Foto Presisi"
-                        : "Tangkap Frame Ini"}
+                  {scanMode === "photo" ? "Tangkap Foto Presisi" : "Tangkap Frame Ini"}
                 </span>
               </button>
               <button

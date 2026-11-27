@@ -2875,7 +2875,6 @@ export default function BrailleScanner({
                 >
                   {[
                     { id: "live", label: "Live" },
-                    { id: "sentence", label: "Kalimat" },
                     { id: "photo", label: "Foto Presisi" },
                   ].map((m) => (
                     <button
@@ -2988,7 +2987,7 @@ export default function BrailleScanner({
                 <div className="flex items-center gap-2">
                   <span className="flex items-center gap-2 rounded-full bg-black/80 px-3.5 py-1.5 text-[0.82rem] font-bold text-white backdrop-blur-md border border-white/20 shadow-lg">
                     <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-pulse" />
-                    <span>Mode: {scanMode === "sentence" ? "Kalimat" : scanMode === "photo" ? "Foto Presisi" : "Live"}</span>
+                    <span>Mode: {scanMode === "photo" ? "Foto Presisi" : "Live"}</span>
                   </span>
                 </div>
 
@@ -3166,7 +3165,7 @@ export default function BrailleScanner({
                       >
                         <span className="h-2 w-2 rounded-full bg-[#E6FF2E] animate-ping" />
                         <span>
-                          Mirror Kamera HP · {scanMode === "sentence" ? "Kalimat" : scanMode === "photo" ? "Foto Presisi" : "Live"}
+                          Mirror Kamera HP · {scanMode === "photo" ? "Foto Presisi" : "Live"}
                         </span>
                       </div>
                     )}
@@ -3453,24 +3452,6 @@ export default function BrailleScanner({
                     <button
                       type="button"
                       onClick={() => {
-                        setScanMode("sentence");
-                        setLiveStreaming(false);
-                        if (pairWsRef.current?.readyState === WebSocket.OPEN) {
-                          pairWsRef.current.send(JSON.stringify({ type: "sync_scan_mode", scanMode: "sentence" }));
-                        }
-                        announce("Mode Kalimat");
-                      }}
-                      className={`px-3 py-1.5 rounded-full text-[0.78rem] font-bold transition-all whitespace-nowrap ${
-                        scanMode === "sentence"
-                          ? "bg-[#E6FF2E] text-[#0A1628]"
-                          : "text-white/80 hover:text-white"
-                      }`}
-                    >
-                      Kalimat
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
                         setScanMode("photo");
                         setLiveStreaming(false);
                         if (pairWsRef.current?.readyState === WebSocket.OPEN) {
@@ -3493,8 +3474,6 @@ export default function BrailleScanner({
                     onClick={() => {
                       if (sourceMode === "phone") {
                         handleRequestCaptureFromPhone();
-                      } else if (scanMode === "sentence") {
-                        executeSentenceBurstScan();
                       } else {
                         executeSingleOrFreezeScan(null, "webcam");
                       }
@@ -3531,11 +3510,9 @@ export default function BrailleScanner({
                       ? "Memproses foto..."
                       : pairPeers === 0
                         ? "Menunggu HP Terhubung..."
-                        : scanMode === "sentence"
-                          ? "Tangkap Kalimat (Burst 3 Frame)"
-                          : scanMode === "photo"
-                            ? "Tangkap Foto Presisi"
-                            : "Tangkap Frame Ini"}
+                        : scanMode === "photo"
+                          ? "Tangkap Foto Presisi"
+                          : "Tangkap Frame Ini"}
                   </span>
                 </button>
                 {scanMode === "live" && pairPeers > 0 && (
@@ -3614,37 +3591,21 @@ export default function BrailleScanner({
               </button>
             ) : (
               <>
-                {scanMode === "sentence" ? (
-                  <button
-                    type="button"
-                    className="btn btn-primary flex-1"
-                    onClick={executeSentenceBurstScan}
-                    disabled={status === "loading"}
-                  >
-                    <Check size={18} aria-hidden="true" />
-                    <span>
-                      {burstProgress > 0
-                        ? `Menangkap Frame ${burstProgress}/3...`
-                        : "Tangkap Kalimat (Burst 3 Frame)"}
-                    </span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn btn-primary flex-1"
-                    onClick={() => executeSingleOrFreezeScan(null, "webcam")}
-                    disabled={status === "loading"}
-                  >
-                    <Check size={18} aria-hidden="true" />
-                    <span>
-                      {status === "loading"
-                        ? "Memproses..."
-                        : scanMode === "live"
-                          ? "Tangkap Frame Ini"
-                          : "Tangkap Foto Presisi"}
-                    </span>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="btn btn-primary flex-1"
+                  onClick={() => executeSingleOrFreezeScan(null, "webcam")}
+                  disabled={status === "loading"}
+                >
+                  <Check size={18} aria-hidden="true" />
+                  <span>
+                    {status === "loading"
+                      ? "Memproses..."
+                      : scanMode === "live"
+                        ? "Tangkap Frame Ini"
+                        : "Tangkap Foto Presisi"}
+                  </span>
+                </button>
 
                 {scanMode === "live" && (
                   <button
