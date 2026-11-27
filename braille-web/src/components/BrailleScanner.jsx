@@ -3085,7 +3085,7 @@ export default function BrailleScanner({
                     )}
                   </>
                 ) : (
-                  <div className="flex flex-col items-center justify-center gap-3 px-5 py-4 text-center z-10 max-w-[460px]">
+                  <div className="mx-auto my-auto w-full flex flex-col items-center justify-center gap-3 px-5 py-4 text-center z-10 max-w-[460px]">
                     <div className="flex flex-col gap-1">
                       <span className="text-[1.04rem] font-bold text-white">
                         {pairPeers > 0
@@ -3179,7 +3179,7 @@ export default function BrailleScanner({
                 )}
 
                 {!isCameraActive && (
-                  <div className="flex flex-col items-center gap-2.5 px-4 py-6 text-center z-10">
+                  <div className="mx-auto my-auto flex flex-col items-center gap-2.5 px-4 py-6 text-center z-10">
                     <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white">
                       <CameraOff size={22} aria-hidden="true" />
                     </span>
