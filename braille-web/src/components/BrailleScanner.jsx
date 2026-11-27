@@ -454,22 +454,41 @@ export default function BrailleScanner({
   };
 
   const mergeServerSessions = useCallback((serverList) => {
-    const filtered = (serverList || [])
-      .filter((s) => !deletedSessionIdsRef.current.has(s.id))
+    const serverArr = Array.isArray(serverList) ? serverList : [];
+    const seenIds = new Set();
+    const filtered = serverArr
+      .filter((s) => s && s.id && !deletedSessionIdsRef.current.has(s.id))
       .map((s) => {
+        seenIds.add(s.id);
         const override = localOverridesRef.current.get(s.id);
         const cachedDetail = sessionCacheRef.current.get(s.id);
         const cachedCount = Array.isArray(cachedDetail?.items) ? cachedDetail.items.length : null;
+        const cachedPreview =
+          Array.isArray(cachedDetail?.items) && cachedDetail.items.length > 0
+            ? cachedDetail.items[cachedDetail.items.length - 1]?.final_text || ""
+            : "";
         return {
           ...s,
           ...(override || {}),
           scan_count: cachedCount !== null ? Math.max(s.scan_count || 0, cachedCount) : (s.scan_count ?? 0),
+          last_preview: s.last_preview || cachedPreview || "",
         };
       });
+
+    // Pertahankan sesi yang sudah ada di memori lokal / cache jika respons server kosong sementara
+    // (mis. karena cold-start kontainer atau sesi dibuat di fallback lokal sebelum restart)
+    const preservedLocal = (sessionsRef.current || []).filter((loc) => {
+      if (!loc || !loc.id || seenIds.has(loc.id)) return false;
+      if (deletedSessionIdsRef.current.has(loc.id)) return false;
+      if (String(loc.id).startsWith("temp-")) return false;
+      return true;
+    });
+    preservedLocal.forEach((loc) => seenIds.add(loc.id));
+
     const pendingList = Array.from(pendingCreatesRef.current.values()).filter(
-      (p) => !deletedSessionIdsRef.current.has(p.id),
+      (p) => p && p.id && !seenIds.has(p.id) && !deletedSessionIdsRef.current.has(p.id),
     );
-    const combined = [...pendingList, ...filtered];
+    const combined = [...pendingList, ...filtered, ...preservedLocal];
     combined.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
     return combined;
   }, []);
@@ -611,9 +630,24 @@ export default function BrailleScanner({
   useEffect(() => {
     let active = true;
     let retryTimer = null;
-    const applyLoadedSessions = (res) => {
+    const applyLoadedSessions = async (res) => {
       if (!active) return;
       const daftar = mergeServerSessions(res.sessions || []);
+      if (daftar.length === 0) {
+        try {
+          const initialSes = await createSession("Sesi 001");
+          if (!active) return;
+          const initialDetail = { ...initialSes, items: [], scan_count: 0 };
+          persistSessionDetailCache(initialSes.id, initialDetail);
+          setSessions([initialSes]);
+          setSessionsState("ready");
+          setActiveSessionId(initialSes.id);
+          setActiveSession(initialDetail);
+          return;
+        } catch {
+          // lanjutkan
+        }
+      }
       setSessions(daftar);
       setSessionsState("ready");
       setActiveSessionId((currId) => {
@@ -1585,14 +1619,44 @@ export default function BrailleScanner({
       }
 
       const finalTxt = (editingText || selectedItem.final_text || "").trim();
-      const res = await createSessionScan(targetSessionId, selectedItem.blob || null, {
-        mode: selectedItem.mode,
-        source: selectedItem.source,
-        checkBlur: false,
-        overrideFinalText: finalTxt,
-        overrideRawText: selectedItem.raw_text,
-        cellsJson: selectedItem.cells_json,
-      });
+      let res = null;
+      try {
+        res = await createSessionScan(targetSessionId, selectedItem.blob || null, {
+          mode: selectedItem.mode,
+          source: selectedItem.source,
+          checkBlur: false,
+          overrideFinalText: finalTxt,
+          overrideRawText: selectedItem.raw_text,
+          cellsJson: selectedItem.cells_json,
+        });
+      } catch (scanErr) {
+        // Jika sesi lama berasal dari fallback kontainer yang sudah ter-reset (404),
+        // otomatis buat ulang sesi tersebut di Supabase lalu simpan tangkapan ke sesi baru!
+        if (scanErr?.status === 404) {
+          const recreatedTitle =
+            activeSession?.title ||
+            sessionsRef.current.find((s) => s.id === targetSessionId)?.title ||
+            "Sesi 001";
+          const recreated = await createSession(recreatedTitle);
+          const oldId = targetSessionId;
+          targetSessionId = recreated.id;
+          tempToRealIdRef.current.set(oldId, targetSessionId);
+          setSessions((prev) =>
+            prev.map((s) => (s.id === oldId ? { ...s, ...recreated, id: targetSessionId } : s)),
+          );
+          setActiveSessionId(targetSessionId);
+          res = await createSessionScan(targetSessionId, selectedItem.blob || null, {
+            mode: selectedItem.mode,
+            source: selectedItem.source,
+            checkBlur: false,
+            overrideFinalText: finalTxt,
+            overrideRawText: selectedItem.raw_text,
+            cellsJson: selectedItem.cells_json,
+          });
+        } else {
+          throw scanErr;
+        }
+      }
 
       const savedItem = {
         ...(res?.item || {

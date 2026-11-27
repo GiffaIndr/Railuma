@@ -30,7 +30,9 @@ _TOKEN_CACHE: dict[str, dict] = {}
 
 
 def _decode_supabase_jwt(token: str) -> dict | None:
-    """Ekstrak user_id & profil langsung dari payload JWT Supabase tanpa round-trip jaringan."""
+    """Ekstrak user_id & profil langsung dari payload JWT Supabase tanpa round-trip jaringan.
+    Jika token sudah kedaluwarsa (exp < sekarang), kembalikan None agar klien melakukan refresh token.
+    """
     try:
         parts = token.split(".")
         if len(parts) != 3:
@@ -39,6 +41,11 @@ def _decode_supabase_jwt(token: str) -> dict | None:
         pad = "=" * ((4 - len(payload_b64) % 4) % 4)
         raw = base64.urlsafe_b64decode(payload_b64 + pad)
         data = json.loads(raw.decode("utf-8"))
+        exp = data.get("exp")
+        if exp is not None:
+            now_ts = datetime.now(timezone.utc).timestamp()
+            if float(exp) <= (now_ts + 15):
+                return None
         uid = data.get("sub")
         if not uid:
             return None
@@ -49,6 +56,7 @@ def _decode_supabase_jwt(token: str) -> dict | None:
             "id": uid,
             "email": email,
             "name": name,
+            "exp": float(exp) if exp is not None else None,
         }
     except Exception:  # noqa: BLE001
         return None
@@ -271,35 +279,19 @@ class RailumaStore:
         if not access_token:
             return None
         if access_token in _TOKEN_CACHE:
-            return _TOKEN_CACHE[access_token]
+            cached = _TOKEN_CACHE[access_token]
+            exp = cached.get("exp")
+            if exp is not None and float(exp) <= (datetime.now(timezone.utc).timestamp() + 15):
+                _TOKEN_CACHE.pop(access_token, None)
+            else:
+                return cached
 
         if not access_token.startswith("local_"):
             jwt_user = _decode_supabase_jwt(access_token)
             if jwt_user and jwt_user.get("id"):
                 _TOKEN_CACHE[access_token] = jwt_user
                 return jwt_user
-
-            if not SUPABASE_OFFLINE:
-                try:
-                    r = HTTP.get(
-                        f"{SUPABASE_URL}/auth/v1/user",
-                        headers=_headers(access_token),
-                        timeout=4.0,
-                    )
-                    if r.ok:
-                        u = r.json()
-                        meta = u.get("user_metadata") or {}
-                        email = u.get("email", "")
-                        user_dict = {
-                            "id": u.get("id"),
-                            "email": email,
-                            "name": meta.get("name") or meta.get("full_name") or email.split("@")[0],
-                        }
-                        _TOKEN_CACHE[access_token] = user_dict
-                        return user_dict
-                    return None
-                except Exception:  # noqa: BLE001
-                    pass
+            return None
 
         db = _baca_lokal()
         return db.get("tokens", {}).get(access_token)

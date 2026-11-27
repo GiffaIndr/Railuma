@@ -199,10 +199,73 @@ export function translateAuthErrorMessage(msg) {
 
 const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function isJwtExpiringSoon(token) {
+  if (!token || token.startsWith("local_")) return false;
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return false;
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => `%${`00${c.charCodeAt(0).toString(16)}`.slice(-2)}`)
+        .join(""),
+    );
+    const parsed = JSON.parse(jsonPayload);
+    if (!parsed.exp) return false;
+    const nowSec = Date.now() / 1000;
+    return Number(parsed.exp) <= nowSec + 45;
+  } catch {
+    return false;
+  }
+}
+
+let activeRefreshPromise = null;
+
+async function ensureFreshToken() {
+  let token = getAuthToken();
+  if (!token || !isJwtExpiringSoon(token)) return token;
+
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return token;
+
+  if (!activeRefreshPromise) {
+    activeRefreshPromise = (async () => {
+      try {
+        const refreshRes = await fetch(`${API_URL}/api/v1/auth/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        if (refreshRes.ok) {
+          const refreshed = await refreshRes.json();
+          if (refreshed.access_token) {
+            const isSessionOnly = Boolean(sessionStorage.getItem(AUTH_TOKEN_KEY));
+            setAuthSession(
+              refreshed.access_token,
+              refreshed.user || getSavedUser(),
+              !isSessionOnly,
+              refreshed.refresh_token || refreshToken,
+            );
+            return refreshed.access_token;
+          }
+        }
+      } catch {
+        // biarkan lanjut dengan token yang ada
+      } finally {
+        activeRefreshPromise = null;
+      }
+      return token;
+    })();
+  }
+  return activeRefreshPromise;
+}
+
 async function fetchJson(url, options = {}, timeoutMs = 35000, isRetry = false, netRetryCount = 0) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const token = getAuthToken();
+  const isAuthEndpoint = url.includes("/auth/login") || url.includes("/auth/register") || url.includes("/auth/refresh");
+  const token = isAuthEndpoint ? getAuthToken() : await ensureFreshToken();
   const headers = { ...(options.headers || {}) };
   if (token && !headers.Authorization) {
     headers.Authorization = `Bearer ${token}`;
